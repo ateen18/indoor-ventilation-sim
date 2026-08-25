@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="560" viewBox="0 0 800 560">
+  <rect width="800" height="560" fill="#ffffff"/>
+  <!-- 外墙（12px 粗） -->
+  <rect x="40" y="40" width="720" height="480" fill="none" stroke="#111111" stroke-width="12"/>
+  <!-- 外墙窗洞：白覆盖（多留2px余量避免渲染被墙底/顶吃掉）再用细双线表示窗 -->
+  <rect x="100" y="30" width="120" height="20" fill="#ffffff"/>
+  <line x1="100" y1="37" x2="220" y2="37" stroke="#111111" stroke-width="2"/>
+  <line x1="100" y1="43" x2="220" y2="43" stroke="#111111" stroke-width="2"/>
+  <rect x="300" y="510" width="180" height="20" fill="#ffffff"/>
+  <line x1="300" y1="517" x2="480" y2="517" stroke="#111111" stroke-width="2"/>
+  <line x1="300" y1="523" x2="480" y2="523" stroke="#111111" stroke-width="2"/>
+  <rect x="30" y="200" width="20" height="120" fill="#ffffff"/>
+  <line x1="37" y1="200" x2="37" y2="320" stroke="#111111" stroke-width="2"/>
+  <line x1="43" y1="200" x2="43" y2="320" stroke="#111111" stroke-width="2"/>
+  <rect x="750" y="240" width="20" height="120" fill="#ffffff"/>
+  <line x1="757" y1="240" x2="757" y2="360" stroke="#111111" stroke-width="2"/>
+  <line x1="763" y1="240" x2="763" y2="360" stroke="#111111" stroke-width="2"/>
+  <!-- 内墙（8px） -->
+  <line x1="440" y1="46" x2="440" y2="300" stroke="#111111" stroke-width="8"/>
+  <line x1="46" y1="300" x2="754" y2="300" stroke="#111111" stroke-width="8"/>
+  <line x1="600" y1="300" x2="600" y2="514" stroke="#111111" stroke-width="8"/>
+  <!-- 内墙门洞：白覆盖 + 门弧 -->
+  <rect x="200" y="294" width="50" height="12" fill="#ffffff"/>
+  <path d="M 250 306 A 50 50 0 0 0 200 256" fill="none" stroke="#111111" stroke-width="2"/>
+  <rect x="434" y="150" width="12" height="50" fill="#ffffff"/>
+  <path d="M 434 200 A 50 50 0 0 1 384 150" fill="none" stroke="#111111" stroke-width="2"/>
+  <rect x="600" y="380" width="8" height="50" fill="#ffffff"/>
+  <path d="M 608 430 A 50 50 0 0 0 658 380" fill="none" stroke="#111111" stroke-width="2"/>
+  <!-- 房间文字标签（应被噪声过滤去掉） -->
+  <text x="240" y="170" font-family="sans-serif" font-size="30" font-weight="bold" fill="#333333">客厅</text>
+  <text x="180" y="430" font-family="sans-serif" font-size="30" font-weight="bold" fill="#333333">卧室</text>
+  <text x="510" y="170" font-family="sans-serif" font-size="30" font-weight="bold" fill="#333333">厨房</text>
+  <text x="650" y="430" font-family="sans-serif" font-size="30" font-weight="bold" fill="#333333">卫生间</text>
+  <!-- 图外尺寸标注文字（应被过滤） -->
+  <text x="340" y="24" font-family="sans-serif" font-size="22" fill="#666666">12000</text>
+  <text x="8" y="300" font-family="sans-serif" font-size="22" fill="#666666" transform="rotate(-90 14 300)">8400</text>
+</svg>

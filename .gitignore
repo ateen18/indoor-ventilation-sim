@@ -1,0 +1,6 @@
+# WorkBuddy 本地数据（记忆/技能，不发布）
+.workbuddy/
+
+# 系统文件
+Thumbs.db
+.DS_Store
