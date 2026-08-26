@@ -18,6 +18,7 @@ function elStub(){ return {
 global.document={
   getElementById:()=>elStub(), createElement:()=>elStub(),
   querySelectorAll:()=>[], querySelector:()=>elStub(),
+  addEventListener(){},
 };
 global.window={addEventListener(){}, print(){}};
 global.localStorage={getItem:()=>null,setItem(){},removeItem(){}};

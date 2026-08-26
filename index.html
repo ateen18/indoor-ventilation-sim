@@ -43,6 +43,7 @@ aside.panel{width:330px; flex-shrink:0; display:flex; flex-direction:column; gap
 .btn.primary{background:var(--pri); border-color:var(--pri); color:#fff; font-weight:600;}
 .btn.small{padding:4px 10px; font-size:12px;}
 .btn.danger{color:var(--bad); border-color:#fecaca;}
+.btn[disabled]{opacity:.4;cursor:not-allowed;}
 .hint{color:var(--sub); font-size:11px; line-height:1.7; margin-top:8px;}
 .badge-dirty{display:none; background:#fef3c7; color:#92400e; border:1px solid #fde68a; padding:4px 10px; border-radius:6px; font-size:12px;}
 .badge-dirty.show{display:inline-block;}
@@ -97,12 +98,15 @@ canvas.chart{width:100%; height:150px; border:1px solid var(--line); border-radi
 <header>
   <div class="logo">🌬️ 室内通风模拟与风扇布局优化</div>
   <nav>
-    <button data-view="model" class="active">① 户型建模</button>
+    <button data-view="community" class="active">⓪ 小区建模</button>
+    <button data-view="model">① 户型建模</button>
     <button data-view="sim">② 通风模拟</button>
     <button data-view="compare">③ 方案对比</button>
     <button data-view="report">④ 通风报告</button>
   </nav>
   <div class="hdr-actions">
+    <button class="btn small" id="btnUndo" disabled title="撤销 (Ctrl+Z)">↶ 撤销</button>
+    <button class="btn small" id="btnRedo" disabled title="重做 (Ctrl+Y)">↷ 重做</button>
     <button class="btn small" id="btnExport">导出工程</button>
     <button class="btn small" id="btnImport">导入工程</button>
     <button class="btn small" id="btnDemo">重置为示例户型</button>
@@ -110,8 +114,54 @@ canvas.chart{width:100%; height:150px; border:1px solid var(--line); border-radi
 </header>
 <main>
 
+<!-- ============ ⓪ 小区建模 ============ -->
+<section class="view active" id="view-community">
+  <div class="toolbar">
+    <button class="tb active" data-ctool="poly">多边形画楼</button>
+    <button class="tb" data-ctool="bldg">笔刷画楼</button>
+    <button class="tb" data-ctool="erase">橡皮</button>
+    <div class="sep"></div>
+    <label>笔刷 <select id="cBrushSize"><option value="2" selected>2格</option><option value="3">3格</option><option value="4">4格</option></select></label>
+    <label>模式 <select id="cBrushMode"><option value="free" selected>自由</option><option value="line">直线</option></select></label>
+    <div class="sep"></div>
+    <button class="btn small" id="btnCopyPoly" disabled>📋 复制楼栋</button>
+    <button class="btn small" id="btnDelPoly" disabled>🗑 删除楼栋</button>
+    <div class="sep"></div>
+    <input type="file" id="planFile" accept="image/*" style="display:none">
+    <button class="btn small" id="btnPlanImg">上传楼盘平面图</button>
+    <label style="font-size:11px">透明度 <input type="range" id="planOpacity" min="0" max="1" step="0.1" value="0.5" style="width:60px"></label>
+    <div class="sep"></div>
+    <label style="font-size:11px">识别阈值 <input type="range" id="detectThreshold" min="40" max="220" step="5" value="128" style="width:80px"></label>
+    <button class="btn small" id="btnAutoDetect">🔍 自动识别楼栋</button>
+    <button class="btn small" id="btnFlipPolarity" title="手动切换深色/浅色楼栋识别" style="font-size:11px">极性: <span id="polarityLabel">自动</span></button>
+    <div class="sep"></div>
+    <button class="tb" data-ctool="mark">标记户型位置</button>
+    <div class="sep"></div>
+    <button class="btn small" id="btnRunComm">▶ 小区风场模拟</button>
+    <button class="btn small" id="btnExtractWind" disabled>提取局部风→户形</button>
+    <button class="btn small" id="btnClearComm">清空小区</button>
+  </div>
+  <div class="layout">
+    <div class="canvas-wrap">
+      <canvas id="cvC" width="1008" height="700" style="cursor:crosshair"></canvas>
+      <svg id="cCompassSvg" width="80" height="80" viewBox="-50 -50 100 100" style="position:absolute;top:10px;right:10px;flex:none;cursor:grab;z-index:5;filter:drop-shadow(0 1px 3px rgba(0,0,0,.3))">
+        <circle r="45" fill="rgba(255,255,255,.88)" stroke="#94a3b8" stroke-width="1.5"/>
+        <g id="cCompassG">
+          <polygon points="0,-38 -8,0 0,8 8,0" fill="#dc2626"/>
+          <polygon points="0,38 -8,0 0,-8 8,0" fill="#475569"/>
+          <text x="0" y="-42" text-anchor="middle" font-size="11" font-weight="bold" fill="#dc2626">N</text>
+        </g>
+      </svg>
+      <div class="hint">上传楼盘平面图 → 用「多边形画楼」沿楼栋边缘点击顶点 → 双击或点击起点闭合 → 输入层数。选中楼栋后可复制到相同轮廓的其他楼栋。<b>指北针可拖拽旋转（平面图不一定正南正北）。</b></div>
+    </div>
+    <aside class="panel" id="commPanel">
+      <div id="commInfo" class="side-info" style="overflow-y:auto;max-height:680px"></div>
+    </aside>
+  </div>
+</section>
+
 <!-- ============ ① 户型建模 ============ -->
-<section class="view active" id="view-model">
+<section class="view" id="view-model">
   <div class="toolbar">
     <button class="tb active" data-tool="wall">墙体</button>
     <button class="tb" data-tool="win">窗户</button>
@@ -323,6 +373,8 @@ const S={ tool:'wall', stool:'select', brush:2, brushMode:'free',
   fans:[], selFan:-1, dirty:false,
   underlay:null, ulOpacity:.7, ulScale:1, ulX:0, ulY:0, ulSrc:null, ulDst:[0,0],
   zones:[], wins:[], scen:[],
+  useLocalWind:false,   // false=全部窗用全局公式; true=尊重各窗 localWind 覆盖
+  localWindSource:null,  // null=手动输入; 'community'=来自小区模拟提取（方案二）
   sim:null };
 let needPersist=false;   // 数据待写 localStorage（30s 定时器据此跳过无变化的全量序列化）
 const DIRS16=['北','北东北','东北','东东北','东','东东南','东南','南东南','南','南西南','西南','西西南','西','西西北','西北','北西北'];
@@ -750,44 +802,48 @@ function winNormal(w){ // 朝外法线（格）：遍历所有窗格找 C_EXT �
 function analyzeWindFace(){
   const d=effWindDir()*Math.PI/180;               // 风向角已按指北针朝向映射到图纸坐标
   const wx=-Math.sin(d), wy=Math.cos(d); // 风矢量（空气运动方向）
-  const inlets=[], outlets=[], laterals=[];
+  const inlets=[], outlets=[], laterals=[], overridden=[];
   for(const w of S.wins){
     if(!w.open) continue;
     const n=winNormal(w);
-    const wn=wx*n[0]+wy*n[1]; // <0 = 风吹入室内（迎风）
+    let lwx=wx, lwy=wy, lSpd=S.windSpd;
+    if(S.useLocalWind && w.localWind){
+      const ld=(w.localWind.dir+S.northDeg)*Math.PI/180;
+      lwx=-Math.sin(ld); lwy=Math.cos(ld); lSpd=w.localWind.spd;
+    }
+    const lwn=lwx*n[0]+lwy*n[1]; // <0 = 风吹入室内（迎风）
     const cx={sx:0,sy:0}; for(const c of w.cells){cx.sx+=c%NX; cx.sy+=(c-c%NX)/NX;}
     cx.sx/=w.cells.length; cx.sy/=w.cells.length;
-    if(wn<-.05) inlets.push({w,n,cx});
-    else if(wn>.05) outlets.push({w,n,cx});
+    if(S.useLocalWind && w.localWind){
+      overridden.push({w,n,cx,local:w.localWind,lwn});
+    } else if(lwn<-.05) inlets.push({w,n,cx});
+    else if(lwn>.05) outlets.push({w,n,cx});
     else laterals.push({w,n,cx});                 // 平行风：靠角部吸力/切向卷吸做衰减换气
   }
-  return {inlets,outlets,laterals,wx,wy,dir:S.windDir,spd:S.windSpd};
+  return {inlets,outlets,laterals,overridden,wx,wy,dir:S.windDir,spd:S.windSpd};
 }
 /* 绘制进/排风箭头：绿色向内=进风，橙色向外=排风 */
 function drawWindFace(ctx){
   const wf=analyzeWindFace();
   ctx.save();
-  for(const {w,n,cx} of wf.inlets){
-    const bx=cx.sx*PX, by=cx.sy*PX;
-    const ex=bx-n[0]*28, ey=by-n[1]*28; // 箭头从室外指向室内
-    ctx.strokeStyle='#16a34a'; ctx.fillStyle='#16a34a'; ctx.lineWidth=2.5;
-    ctx.beginPath(); ctx.moveTo(bx-n[0]*30,by-n[1]*30); ctx.lineTo(ex,ey); ctx.stroke();
-    const ang=Math.atan2(ey-(by-n[1]*30),ex-(bx-n[0]*30));
-    ctx.beginPath(); ctx.moveTo(ex,ey);
-    ctx.lineTo(ex-6*Math.cos(ang-.5),ey-6*Math.sin(ang-.5));
-    ctx.lineTo(ex-6*Math.cos(ang+.5),ey-6*Math.sin(ang+.5));
-    ctx.closePath(); ctx.fill();
-  }
-  for(const {w,n,cx} of wf.outlets){
-    const bx=cx.sx*PX, by=cx.sy*PX;
-    const ex=bx+n[0]*28, ey=by+n[1]*28; // 箭头从室内指向室外
-    ctx.strokeStyle='#ea580c'; ctx.fillStyle='#ea580c'; ctx.lineWidth=2.5;
+  const drawArrow=(bx,by,ex,ey,color,lw)=>{
+    ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=lw;
     ctx.beginPath(); ctx.moveTo(bx,by); ctx.lineTo(ex,ey); ctx.stroke();
     const ang=Math.atan2(ey-by,ex-bx);
     ctx.beginPath(); ctx.moveTo(ex,ey);
     ctx.lineTo(ex-6*Math.cos(ang-.5),ey-6*Math.sin(ang-.5));
     ctx.lineTo(ex-6*Math.cos(ang+.5),ey-6*Math.sin(ang+.5));
     ctx.closePath(); ctx.fill();
+  };
+  for(const {w,n,cx} of wf.inlets){
+    const bx=cx.sx*PX, by=cx.sy*PX;
+    const ex=bx-n[0]*28, ey=by-n[1]*28; // 箭头从室外指向室内
+    drawArrow(bx-n[0]*30,by-n[1]*30,ex,ey,'#16a34a',2.5);
+  }
+  for(const {w,n,cx} of wf.outlets){
+    const bx=cx.sx*PX, by=cx.sy*PX;
+    const ex=bx+n[0]*28, ey=by+n[1]*28; // 箭头从室内指向室外
+    drawArrow(bx,by,ex,ey,'#ea580c',2.5);
   }
   // 侧向窗（平行风）：沿墙切向的灰色小箭头，表示卷吸/吸力换气
   for(const {w,n,cx} of wf.laterals){
@@ -796,13 +852,14 @@ function drawWindFace(ctx){
     const tx=n[1]*Math.sign(tn||1), ty=-n[0]*Math.sign(tn||1);   // 沿墙切向（风刮过方向）
     const bx=cx.sx*PX, by=cx.sy*PX;
     const ex=bx+tx*22, ey=by+ty*22;
-    ctx.strokeStyle='#64748b'; ctx.fillStyle='#64748b'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(bx,by); ctx.lineTo(ex,ey); ctx.stroke();
-    const ang=Math.atan2(ey-by,ex-bx);
-    ctx.beginPath(); ctx.moveTo(ex,ey);
-    ctx.lineTo(ex-5*Math.cos(ang-.5),ey-5*Math.sin(ang-.5));
-    ctx.lineTo(ex-5*Math.cos(ang+.5),ey-5*Math.sin(ang+.5));
-    ctx.closePath(); ctx.fill();
+    drawArrow(bx,by,ex,ey,'#64748b',2);
+  }
+  // 局部风覆盖窗：紫色箭头，按局部风在法向投影判定进/出风
+  for(const {w,n,cx,lwn} of wf.overridden){
+    const bx=cx.sx*PX, by=cx.sy*PX;
+    if(lwn<0){ const ex=bx-n[0]*28, ey=by-n[1]*28; drawArrow(bx-n[0]*30,by-n[1]*30,ex,ey,'#7c3aed',2.5); }
+    else if(lwn>0){ const ex=bx+n[0]*28, ey=by+n[1]*28; drawArrow(bx,by,ex,ey,'#6d28d9',2.5); }
+    else { drawArrow(bx-10,by,bx+10,by,'#8b5cf6',2); }
   }
   ctx.restore();
 }
@@ -818,8 +875,8 @@ function renderWindFace(){
   const north=S.northDeg||0;
   let html=`<div class="fold" style="background:#eff6ff;border-color:#bfdbfe">
     <b>风向</b> ${dirName}风 ${S.windSpd}m/s · <b>迎风面</b> ${faceDir}侧（图纸上为${dir8Of(effWindDir())}侧）<br>
-    <b>进风窗</b> ${wf.inlets.length} 扇 · <b>侧向窗</b> ${wf.laterals.length} 扇 · <b>排风窗</b> ${wf.outlets.length} 扇${north?`<br><b>朝向</b> ${northDesc()}`:''}</div>`;
-  if(!wf.inlets.length&&!wf.laterals.length&&wf.outlets.length)
+    <b>进风窗</b> ${wf.inlets.length} 扇 · <b>侧向窗</b> ${wf.laterals.length} 扇 · <b>排风窗</b> ${wf.outlets.length} 扇${wf.overridden.length?` · <b style="color:#7c3aed">覆盖窗</b> ${wf.overridden.length} 扇`:''}${north?`<br><b>朝向</b> ${northDesc()}`:''}</div>`;
+  if(!wf.inlets.length&&!wf.laterals.length&&(!S.useLocalWind||!wf.overridden.length)&&wf.outlets.length)
     html+=`<div class="fold" style="margin-top:6px"><span style="color:var(--bad);font-weight:600">⚠ 无迎风/侧向窗：仅靠背风吸力换气，风量很小</span></div>`;
   else if(!wf.inlets.length&&wf.laterals.length)
     html+=`<div class="fold" style="margin-top:6px"><span style="color:#b45309;font-weight:600">无正对迎风窗——以侧向风衰减换气为主（角部吸力+切向卷吸）</span></div>`;
@@ -850,7 +907,38 @@ function renderWindFace(){
     }
     html+='</table>';
   }
+  // 逐窗实测风场覆盖 UI
+  const src=S.localWindSource==='community'?'（数据来自小区模拟提取）':'';
+  html+=`<div class="fold" style="margin-top:8px">
+    <label><input type="checkbox" id="chkLocalWind" ${S.useLocalWind?'checked':''}> <b>启用逐窗实测风场覆盖</b></label>${S.localWindSource==='community'?' <span class="tag g" style="font-size:10px">小区提取</span>':''}
+    <div style="font-size:11px;color:var(--sub);margin-top:4px">勾选后可逐窗输入实测局部风向风速，绕过全局公式${src}。不确定的窗留空即用全局公式。</div>
+  </div>`;
+  if(S.useLocalWind){
+    html+='<table class="tbl" style="margin-top:6px" id="winLocalTbl"><tr><th>窗</th><th>全局判定</th><th>实测风向°</th><th>实测风速 m/s</th><th>Cp(高级)</th></tr>';
+    for(let i=0;i<S.wins.length;i++){
+      const w=S.wins[i];
+      const n=winNormal(w);
+      const gwn=wf.wx*n[0]+wf.wy*n[1];
+      const gcat=gwn<-.05?'进风':gwn>.05?'排风':'侧向';
+      const lw=w.localWind||{};
+      html+=`<tr><td>窗${w.id+1}${w.open?'':'(关)'}</td><td>${gcat}</td>
+        <td><input type="number" class="lw-dir" data-wi="${i}" min="0" max="359" step="22.5" value="${lw.dir??''}" placeholder="自动" style="width:56px"></td>
+        <td><input type="number" class="lw-spd" data-wi="${i}" min="0" max="20" step="0.1" value="${lw.spd??''}" placeholder="自动" style="width:56px"></td>
+        <td><input type="number" class="lw-cp" data-wi="${i}" step="0.1" value="${w.localCp??''}" placeholder="自动" style="width:48px"></td></tr>`;
+    }
+    html+='</table>';
+  }
   el.innerHTML=html;
+  const chk=$('chkLocalWind'); if(chk) chk.onchange=e=>{
+    S.useLocalWind=e.target.checked; markDirty(); renderWindFace();
+    if(simVisible) drawBase(offBase.getContext('2d'),false);
+  };
+  el.querySelectorAll('.lw-dir').forEach(inp=>{ inp.onchange=()=>{ const i=+inp.dataset.wi; const v=parseFloat(inp.value);
+    if(!isFinite(v))return; if(!S.wins[i].localWind)S.wins[i].localWind={dir:0,spd:0}; S.wins[i].localWind.dir=v; markDirty(); renderWindFace(); }; });
+  el.querySelectorAll('.lw-spd').forEach(inp=>{ inp.onchange=()=>{ const i=+inp.dataset.wi; const v=parseFloat(inp.value);
+    if(!isFinite(v))return; if(!S.wins[i].localWind)S.wins[i].localWind={dir:0,spd:0}; S.wins[i].localWind.spd=v; markDirty(); renderWindFace(); }; });
+  el.querySelectorAll('.lw-cp').forEach(inp=>{ inp.onchange=()=>{ const i=+inp.dataset.wi; const v=parseFloat(inp.value);
+    if(!isFinite(v)){S.wins[i].localCp=null;} else {S.wins[i].localCp=v;} markDirty(); renderWindFace(); }; });
 }
 function drawWindIndicator(ctx,sim){
   const d=effWindDir()*Math.PI/180; const vx=-Math.sin(d), vy=Math.cos(d);   // 箭头按图纸坐标画（已含朝向旋转）
@@ -944,7 +1032,7 @@ function edgeBC(f){
 /* 窗户边界条件：迎风窗注入入流；侧向/背风窗改为"环境压力库"边界（吸力 Cp + 沿墙切向卷吸），
    使斜风/平行风下仍有伯努利式衰减换气，而不是零进风 */
 function windowBC(f){
-  if(S.windSpd<=.05) return;
+  if(S.windSpd<=.05 && !S.useLocalWind) return;
   const d=effWindDir()*Math.PI/180;               // 风向角按指北针朝向映射到图纸坐标
   const wx=-Math.sin(d)*S.windSpd, wy=Math.cos(d)*S.windSpd;   // 物理风矢量（空气运动方向）
   const maxV=computeMaxV(), conv=UMAX/maxV;
@@ -959,12 +1047,39 @@ function windowBC(f){
   for(const w of S.wins){
     if(!w.open) continue;
     const n=winNormal(w);
-    const wn=wx*n[0]+wy*n[1];                    // <0 表示风穿越该窗吹入室内（迎风）
-    if(wn<-.05){
-      const cp=Math.min(1,-wn/S.windSpd);          // 风在法向的投影 → 有效压力系数
-      const spd=.55*(-wn)*conv;                    // 开口有效系数 0.55，方向沿 -n 入室
+
+    // ---- 逐窗局部风覆盖 ----
+    let lwx=wx, lwy=wy, lSpd=S.windSpd, lCp=null;
+    if(S.useLocalWind && w.localWind){
+      const ld=(w.localWind.dir+S.northDeg)*Math.PI/180;  // 局部风向也经指北针映射
+      lwx=-Math.sin(ld)*w.localWind.spd;
+      lwy=Math.cos(ld)*w.localWind.spd;
+      lSpd=w.localWind.spd;
+      lCp=w.localCp;
+    }
+    const lwn=lwx*n[0]+lwy*n[1];   // 局部风在窗法向的投影
+
+    // 用户直接指定 Cp → 简化压力库路径
+    if(lCp!==null){
+      const cpCl=Math.max(-1.5,Math.min(1.5,lCp));
+      const rhoL=1+1.5*cpCl*uWind*uWind;
+      const spd=.3*Math.abs(cpCl)*uWind;
+      const ux=(cpCl>0?-1:1)*n[0]*spd, uy=(cpCl>0?-1:1)*n[1]*spd;  // Cp>0进风 Cp<0出风
+      for(const c of w.cells){
+        if(!FLUID[c]) continue;
+        const x=c%NX, y=(c-x)/NX, ox=x+n[0], oy=y+n[1];
+        if(inG(ox,oy)&&cell[idx(ox,oy)]===C_WIN) continue;
+        feqAll(rhoL,ux,uy,fe);
+        for(let k=0;k<9;k++)f[k*N+c]=fe[k];
+      }
+      continue;
+    }
+
+    if(lwn<-.05){
+      const cp=Math.min(1,-lwn/lSpd);          // 风在法向的投影 → 有效压力系数
+      const spd=.55*(-lwn)*conv;                    // 开口有效系数 0.55，方向沿 -n 入室
       // 滞止压头：迎风面静压抬升 Δρ=3·(½·Cp·u²)，使入流能顶住室内回压持续供流
-      const rhoW=1+1.5*cp*uWind*uWind;
+      const rhoW=1+1.5*cp*(lSpd*conv)*(lSpd*conv);
       for(const c of w.cells){
         if(!FLUID[c]) continue;
         const x=c%NX, y=(c-x)/NX, ox=x+n[0], oy=y+n[1];
@@ -972,18 +1087,18 @@ function windowBC(f){
         feqAll(rhoW,-n[0]*spd,-n[1]*spd,fe);
         for(let k=0;k<9;k++)f[k*N+c]=fe[k];
       }
-    } else if(wn<Math.max(.05,.12*S.windSpd)){
+    } else if(lwn<Math.max(.05,.12*lSpd)){
       // 侧向窗（风近乎平行刮过墙面）：靠室外层设为环境压力库（Dirichlet 压力 + 沿墙切向卷吸速度）。
       // 平行风：迎风角部加速 → 上游端强吸力(Cp≈-0.6)，下游尾流弱吸力(Cp≈-0.15)，
       //   室内压力介于其间 → 下游窗补入、上游窗抽出，形成衰减的贯通换气（伯努利式引流）。
       // 明显背风的窗不进此分支：保持完全被动开口（实测给背风窗加吸力库反而削弱标准穿堂风 ~15%）。
-      const fLee=Math.max(0,wn)/S.windSpd;          // 0=正平行 1=略偏背风
+      const fLee=Math.max(0,lwn)/lSpd;          // 0=正平行 1=略偏背风
       let sx=0,sy=0; for(const c of w.cells){sx+=c%NX;sy+=(c-c%NX)/NX;} sx/=w.cells.length; sy/=w.cells.length;
-      const p=sx*wx+sy*wy;
+      const p=sx*lwx+sy*lwy;
       const sN=bmax>bmin+.01? (p-bmin)/(bmax-bmin) : .5;   // 0=来风上游端 1=下游端
       const cpS=(1-fLee)*(-.6+.45*sN)+fLee*(-.45);
       const rhoS=1+1.5*cpS*uWind*uWind;
-      let tx=wx-wn*n[0], ty=wy-wn*n[1];
+      let tx=lwx-lwn*n[0], ty=lwy-lwn*n[1];
       const tm=Math.hypot(tx,ty);                  // 切向风分量大小
       const vt=.6*tm*conv;                         // 沿墙刮掠的卷吸速度
       const ux=tm>1e-6?tx/tm*vt:0, uy=tm>1e-6?ty/tm*vt:0;
@@ -1182,7 +1297,35 @@ function renderMetrics(){
 
 /* ================= 风扇管理 ================= */
 function markDirty(){ S.dirty=true; needPersist=true; $('dirtyBadge').classList.add('show'); }
+/* ---- 撤销/重做栈 ---- */
+const undoStack=[], redoStack=[];
+const UNDO_MAX=50;
+function snapshotState(){ return {cell:new Uint8Array(cell), wins:JSON.parse(JSON.stringify(S.wins)), fans:JSON.parse(JSON.stringify(S.fans))}; }
+function pushUndo(){
+  undoStack.push(snapshotState());
+  if(undoStack.length>UNDO_MAX) undoStack.shift();
+  redoStack.length=0; updateUndoBtns();
+}
+function restoreState(s){
+  cell.set(s.cell); S.wins=JSON.parse(JSON.stringify(s.wins)); S.fans=JSON.parse(JSON.stringify(s.fans));
+  winCellId.fill(-1); winOpenMask.fill(1);
+  for(const w of S.wins) for(const c of w.cells){ winCellId[c]=w.id; winOpenMask[c]=w.open?1:0; }
+}
+function doUndo(){
+  if(!undoStack.length)return;
+  redoStack.push(snapshotState());
+  restoreState(undoStack.pop());
+  reclassify(); drawModel(); renderFanList(); renderZoneList(); markDirty(); updateUndoBtns();
+}
+function doRedo(){
+  if(!redoStack.length)return;
+  undoStack.push(snapshotState());
+  restoreState(redoStack.pop());
+  reclassify(); drawModel(); renderFanList(); renderZoneList(); markDirty(); updateUndoBtns();
+}
+function updateUndoBtns(){ const u=$('btnUndo'),r=$('btnRedo'); if(u)u.disabled=!undoStack.length; if(r)r.disabled=!redoStack.length; }
 function addFan(xm,ym){
+  pushUndo();
   S.fans.push({x:xm,y:ym,ang:180,q:8000,d:.5,on:true,name:'风扇'+(S.fans.length+1)});
   S.selFan=S.fans.length-1; renderFanList(); markDirty();
 }
@@ -1216,14 +1359,15 @@ function renderFanList(){
       S.selFan=i;
       if(isInput&&!act&&dir===undefined) return; // 输入控件上仅选中，不重渲染
       const f=S.fans[i];
-      if(act==='tog'){f.on=!f.on;markDirty();}
-      if(act==='del'){S.fans.splice(i,1);S.selFan=-1;markDirty();renderFanList();return;}
-      if(act==='out'){ const w=nearestWin(f); if(w){const n=winNormal(w); f.ang=(Math.round(Math.atan2(n[0],-n[1])*180/Math.PI/5)*5+360)%360;} else alert('附近没有窗户'); }
-      if(act==='in'){ f.ang=(Math.round(aimHouseCenter(f)/5)*5+360)%360; }
+      if(act==='tog'){pushUndo();f.on=!f.on;markDirty();}
+      if(act==='del'){pushUndo();S.fans.splice(i,1);S.selFan=-1;markDirty();renderFanList();return;}
+      if(act==='out'){ pushUndo(); const w=nearestWin(f); if(w){const n=winNormal(w); f.ang=(Math.round(Math.atan2(n[0],-n[1])*180/Math.PI/5)*5+360)%360;} else alert('附近没有窗户'); }
+      if(act==='in'){ pushUndo(); f.ang=(Math.round(aimHouseCenter(f)/5)*5+360)%360; }
       renderFanList(); markDirty();
     };
     it.querySelectorAll('[data-k]').forEach(inp=>{
       inp.onchange=()=>{ const f=S.fans[i]; const k=inp.dataset.k;
+        pushUndo();
         if(k==='q'){f.q=Math.max(50,+inp.value||8000);}
         if(k==='d'){f.d=Math.max(.2,+inp.value||.5);}
         if(k==='ang'){f.ang=+inp.value||0;}
@@ -1235,7 +1379,7 @@ function renderFanList(){
           if(span) span.textContent=`${f.ang}° ${dirName(f.ang)}`; }
       };
     });
-    it.querySelectorAll('[data-dir]').forEach(b=>{ b.onclick=e=>{e.stopPropagation(); S.fans[i].ang=+b.dataset.dir; markDirty(); renderFanList();}; });
+    it.querySelectorAll('[data-dir]').forEach(b=>{ b.onclick=e=>{e.stopPropagation(); pushUndo(); S.fans[i].ang=+b.dataset.dir; markDirty(); renderFanList();}; });
   });
 }
 function dirName(a){ return ['上','右上','右','右下','下','左下','左','左上'][Math.round(a/45)%8]; }  // 风扇朝向以图纸方位表述（不受指北针影响）
@@ -1425,7 +1569,8 @@ function lineCells(x0,y0,x1,y1){
 }
 cvM.addEventListener('mousedown',e=>{
   const[x,y]=canvasPos(cvM,e);
-  if(S.tool==='furn'){ furnStart=[x|0,y|0]; painting=true; return; }
+  if(S.tool==='furn'){ pushUndo(); furnStart=[x|0,y|0]; painting=true; return; }
+  pushUndo();
   painting=true;
   if(S.brushMode==='line'){ lineStart=[x|0,y|0]; }
   else { paintCell(x,y,S.tool); lastPaint=[x|0,y|0]; afterEdit(); }
@@ -1475,15 +1620,15 @@ cvS.addEventListener('mousedown',e=>{
   if(x<0||x>=NX||y<0||y>=NY)return;
   if(S.stool==='addfan'){ addFan(x*DX,y*DX); return; }
   if(S.stool==='delfan'){
-    const fi=fanAt(x,y); if(fi>=0){S.fans.splice(fi,1);S.selFan=-1;renderFanList();markDirty();} return;
+    const fi=fanAt(x,y); if(fi>=0){pushUndo();S.fans.splice(fi,1);S.selFan=-1;renderFanList();markDirty();} return;
   }
   // select 模式：门/窗切换 + 风扇拖动
   const i=idx(x|0,y|0); const c=cell[i];
-  if(c===C_DOORO||c===C_DOORC){ toggleDoorGroup(i); markDirty(); drawBase(offBase.getContext('2d'),false); return; }
-  if(c===C_WIN){ toggleWin(winCellId[i]); return; }
-  { const li=winLeafAt(x,y); if(li>=0){ toggleWin(li); return; } }   // 点到伸进屋里的窗扇条也能开关
+  if(c===C_DOORO||c===C_DOORC){ pushUndo(); toggleDoorGroup(i); markDirty(); drawBase(offBase.getContext('2d'),false); return; }
+  if(c===C_WIN){ pushUndo(); toggleWin(winCellId[i]); return; }
+  { const li=winLeafAt(x,y); if(li>=0){ pushUndo(); toggleWin(li); return; } }   // 点到伸进屋里的窗扇条也能开关
   const fi=fanAt(x,y);
-  if(fi>=0){ S.selFan=fi; dragFan=true; renderFanList(); } else { S.selFan=-1; renderFanList(); }
+  if(fi>=0){ pushUndo(); S.selFan=fi; dragFan=true; renderFanList(); } else { S.selFan=-1; renderFanList(); }
 });
 cvS.addEventListener('mousemove',e=>{
   if(!dragFan)return; const[x,y]=canvasPos(cvS,e);
@@ -1503,6 +1648,7 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   simVisible=b.dataset.view==='sim';                       // 切走暂停 rAF、切回重启（省掉后台全速重绘）
   if(simVisible){ if(!rafId){ lastT=0; rafId=requestAnimationFrame(drawSim); } drawBase(offBase.getContext('2d'),false); if(S.sim) renderHeat(); renderWindFace(); }
   if(b.dataset.view==='model') drawModel();
+  if(b.dataset.view==='community') drawComm();
 });
 document.querySelectorAll('#view-model .toolbar .tb[data-tool]').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#view-model .toolbar .tb').forEach(x=>x.classList.remove('active'));
@@ -1516,9 +1662,9 @@ document.querySelectorAll('#view-sim .toolbar .tb[data-stool]').forEach(b=>b.onc
 $('brushSize').onchange=e=>S.brush=+e.target.value;
 $('brushMode').onchange=e=>S.brushMode=e.target.value;
 $('ckIntExt').onchange=()=>{ drawModel(); drawBase(offBase.getContext('2d'),false); };
-$('btnClear').onclick=()=>{ if(confirm('清空画布？')){ cell.fill(C_EXT); erasedMask.fill(0); winCellId.fill(-1); winOpenMask.fill(1); S.wins=[]; S.fans=[]; S.zones=[]; DX=0.1; updateCellHint(); reclassify(); drawModel(); renderFanList(); markDirty(); } };
+$('btnClear').onclick=()=>{ if(confirm('清空画布？')){ pushUndo(); cell.fill(C_EXT); erasedMask.fill(0); winCellId.fill(-1); winOpenMask.fill(1); S.wins=[]; S.fans=[]; S.zones=[]; DX=0.1; updateCellHint(); reclassify(); drawModel(); renderFanList(); markDirty(); } };
 $('btnRun').onclick=()=>runSim(false);
-$('btnDemo').onclick=()=>{ if(confirm('重置为示例三居室户型？当前修改将丢失。')){ buildDemo(); DX=0.1; updateCellHint(); reclassify(); nameDemoZones(); drawModel(); renderFanList(); markDirty(); } };
+$('btnDemo').onclick=()=>{ if(confirm('重置为示例三居室户型？当前修改将丢失。')){ pushUndo(); buildDemo(); DX=0.1; updateCellHint(); reclassify(); nameDemoZones(); drawModel(); renderFanList(); markDirty(); } };
 $('btnSaveScen').onclick=()=>saveScenario($('scenName').value.trim()||undefined);
 $('btnClearScen').onclick=()=>{ if(confirm('清空全部已保存方案？')){S.scen=[];persist();renderScen();} };
 $('btnGenReport').onclick=genReport;
@@ -1935,6 +2081,7 @@ $('btnCalib').onclick=()=>{
   if(spanCells<3){ info.textContent='该参照房间太小（跨度不足 3 格），请换一个大房间作参照（如客厅）。'; return; }
   const newDX=m/spanCells;
   if(newDX<0.04||newDX>0.4){ info.textContent=`⚠ 换算出每格 ${newDX.toFixed(3)}m，超出合理范围（画布将 >${(NX*newDX).toFixed(0)}m 宽）。请检查参照房间、方向与米数是否选对。`; return; }
+  pushUndo();
   const oldDX=DX, oldArea=z.area;
   DX=newDX;                                       // ★ 只改比例尺，网格与识别结果原样保留
   for(const zz of S.zones) zz.area=(zz.cells.length+(zz.wallCells||0))*DX*DX;   // 建筑面积口径重算（含墙体分摊）
@@ -1983,7 +2130,7 @@ bindUL('ulOpacity','ulOpacity'); bindUL('ulScale','ulScale'); bindUL('ulX','ulX'
 /* 导入导出 */
 $('btnExport').onclick=()=>{
   const data={cell:Array.from(cell),erased:Array.from(erasedMask),wins:S.wins,fans:S.fans,zones:S.zones.map(z=>({name:z.name})),mpc:DX,
-    windDir:S.windDir,windSpd:S.windSpd,northDeg:S.northDeg,ceil:S.ceil,winH:S.winH,cityIdx:S.cityIdx,season:S.season,scen:S.scen};
+    windDir:S.windDir,windSpd:S.windSpd,northDeg:S.northDeg,ceil:S.ceil,winH:S.winH,cityIdx:S.cityIdx,season:S.season,scen:S.scen,useLocalWind:S.useLocalWind,localWindSource:S.localWindSource};
   const a=document.createElement('a');
   const url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));
   a.href=url; a.download='通风模拟工程.json'; a.click();
@@ -1994,10 +2141,12 @@ $('btnImport').onclick=()=>{
   inp.onchange=()=>{ const f=inp.files[0]; if(!f)return;
     const r=new FileReader(); r.onload=()=>{ try{
       const d=JSON.parse(r.result);
+      pushUndo();
       cell.set(d.cell); erasedMask.fill(0); if(d.erased&&d.erased.length===N) erasedMask.set(d.erased); S.wins=d.wins||[]; S.fans=d.fans||[]; S.scen=d.scen||[];
       S.windDir=d.windDir??S.windDir; S.windSpd=d.windSpd??S.windSpd; S.ceil=d.ceil??2.8; S.winH=d.winH??1.2;
       S.northDeg=d.northDeg??0;
       S.cityIdx=d.cityIdx??0; S.season=d.season||'summer';
+      S.useLocalWind=d.useLocalWind||false; S.localWindSource=d.localWindSource||null;
       if(d.mpc>0.02&&d.mpc<0.5) DX=d.mpc; updateCellHint();
       for(const w of S.wins) for(const c of w.cells){ winCellId[c]=w.id; winOpenMask[c]=w.open?1:0; }
       reclassify();
@@ -2015,7 +2164,7 @@ function persist(){ try{
   const scenLite=S.scen.map(({shot,houseCurve,...rest})=>rest);
   localStorage.setItem('ventSim_v1', JSON.stringify({
   cell:Array.from(cell),erased:Array.from(erasedMask),wins:S.wins,fans:S.fans,zoneNames:S.zones.map(z=>z.name),mpc:DX,
-  windDir:S.windDir,windSpd:S.windSpd,northDeg:S.northDeg,ceil:S.ceil,winH:S.winH,cityIdx:S.cityIdx,season:S.season,scen:scenLite}));
+  windDir:S.windDir,windSpd:S.windSpd,northDeg:S.northDeg,ceil:S.ceil,winH:S.winH,cityIdx:S.cityIdx,season:S.season,scen:scenLite,useLocalWind:S.useLocalWind,localWindSource:S.localWindSource}));
   needPersist=false;
 }catch(e){ if(!persistWarned){ persistWarned=true;
   toast('⚠ 自动保存失败（浏览器本地存储空间不足）。当前页面数据仍在，请立即「导出工程」备份，或删除部分已保存方案。',true); } } }
@@ -2026,6 +2175,7 @@ function restore(){ try{
   if(d.mpc>0.02&&d.mpc<0.5) DX=d.mpc;               // 恢复校准后的比例尺
   S.windDir=d.windDir??112.5; S.windSpd=d.windSpd??3.4; S.ceil=d.ceil??2.8; S.winH=d.winH??1.2;
   S.northDeg=d.northDeg??0; S.cityIdx=d.cityIdx??2; S.season=d.season||'summer';
+  S.useLocalWind=d.useLocalWind||false; S.localWindSource=d.localWindSource||null;
   for(const w of S.wins) for(const c of w.cells){ winCellId[c]=w.id; winOpenMask[c]=w.open?1:0; }
   reclassify();
   if(d.zoneNames) S.zones.forEach((z,i)=>{ if(d.zoneNames[i])z.name=d.zoneNames[i]; });
@@ -2033,15 +2183,797 @@ function restore(){ try{
   return true;
 }catch(e){return false;} }
 
+/* ================= ⓪ 小区建模 ================= */
+const CNX=200, CNY=140, CN=CNX*CNY;
+const CDX=0.3;                              // 每格 0.3m → 60m×42m 覆盖
+const CPX=1008/CNX, CPY=700/CNY;            // 格→像素
+let cCell=new Uint8Array(CN);               // 0=空地 1=楼栋
+let cSolid=new Uint8Array(CN), cFluid=new Uint8Array(CN);
+let cF, cF2, cRHO, cUX, cUY;                // 小区 LBM 场
+let cBbox={x0:CNX,y0:CNY,x1:0,y1:0};
+let cPainting=false, cLineStart=null;
+let cTargetPos=null;                         // 用户标记的户形位置 {x,y}（格坐标）
+let cTargetFloor=1;                           // 用户标记的户形所在楼层
+let cViewSlice=0;                             // 当前查看的切片索引
+let cPolarity='auto';                          // 极性: auto(自动) | dark(深色=楼栋) | light(浅色=楼栋)
+let cPolyDrawing=false;                        // 正在画多边形
+let cPolyVerts=[];                             // 当前多边形的顶点列表
+let cPolyPreview=null;                         // 鼠标预览位置 {x,y}
+let cSelectedPoly=-1;                          // 选中的多边形索引
+let cCopiedPoly=null;                          // 复制的多边形数据
+let cPlacingPaste=false;                       // 正在放置粘贴的多边形
+let cellBuilding=new Int8Array(CN).fill(-1);   // 每格所属楼栋索引（-1=无）
+S.community={ planImg:null, planOpacity:0.5, buildings:[], sim:null, ctool:'poly', cbrush:2, cbrushMode:'free', northDeg:0, polygons:[] };
+
+/* ---- 小区画布坐标换算 ---- */
+function cIdx(x,y){ return y*CNX+x; }
+function cInG(x,y){ return x>=0&&x<CNX&&y>=0&&y<CNY; }
+
+/* ---- 点在多边形内（射线法） ---- */
+function pointInPoly(px, py, pts){
+  let inside=false;
+  for(let i=0,j=pts.length-1;i<pts.length;j=i++){
+    const xi=pts[i].x, yi=pts[i].y, xj=pts[j].x, yj=pts[j].y;
+    if(((yi>py)!==(yj>py)) && (px < (xj-xi)*(py-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+/* ---- 多边形质心 ---- */
+function polyCenter(pts){
+  let cx=0, cy=0;
+  for(const p of pts){ cx+=p.x; cy+=p.y; }
+  return {x:cx/pts.length, y:cy/pts.length};
+}
+function cCanvasPos(cv,e){ const r=cv.getBoundingClientRect(), s=cv.width/r.width;
+  return [ (e.clientX-r.left)*s/CPX, (e.clientY-r.top)*s/CPY ]; }
+
+/* ---- 小区绘制 ---- */
+function drawComm(){
+  const ctx=$('cvC').getContext('2d');
+  ctx.clearRect(0,0,1008,700);
+  // 平面图底图
+  if(S.community.planImg){
+    ctx.globalAlpha=S.community.planOpacity;
+    const img=S.community.planImg;
+    const sc=Math.max(1008/img.width, 700/img.height);
+    const w=img.width*sc, h=img.height*sc;
+    ctx.drawImage(img,(1008-w)/2,(700-h)/2,w,h);
+    ctx.globalAlpha=1;
+  }
+  // 楼栋填充（多边形精确轮廓）
+  const slice=S.community.sim?S.community.sim.slices[cViewSlice]:null;
+  const polys=S.community.polygons;
+  for(let pi=0;pi<polys.length;pi++){
+    const p=polys[pi];
+    const b=S.community.buildings[pi];
+    // 切片中穿透的矮楼用半透明色
+    if(slice && b && b.height<slice.height){
+      ctx.fillStyle='rgba(148,163,184,.35)';
+    } else if(pi===cSelectedPoly){
+      ctx.fillStyle='rgba(59,130,246,.6)';   // 选中：蓝色
+    } else {
+      ctx.fillStyle='#475569';
+    }
+    ctx.strokeStyle='#1e293b'; ctx.lineWidth=1.5;
+    ctx.beginPath();
+    p.points.forEach((pt,i)=>{ const px=pt.x*CPX, py=pt.y*CPY; i===0?ctx.moveTo(px,py):ctx.lineTo(px,py); });
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    // 楼栋名称
+    const c=polyCenter(p.points);
+    ctx.fillStyle='#e2e8f0'; ctx.font='bold 13px sans-serif'; ctx.textAlign='center';
+    ctx.fillText(b?b.name:'?', c.x*CPX, c.y*CPY+4);
+    ctx.font='10px sans-serif'; ctx.fillStyle='#cbd5e1';
+    ctx.fillText(`${b?b.floors:6}层`, c.x*CPX, c.y*CPY+16);
+  }
+  // 多边形绘制预览
+  if(cPolyDrawing && cPolyVerts.length>0){
+    ctx.strokeStyle='rgba(220,38,38,.8)'; ctx.lineWidth=2;
+    ctx.beginPath();
+    cPolyVerts.forEach((pt,i)=>{ const px=pt.x*CPX, py=pt.y*CPY; i===0?ctx.moveTo(px,py):ctx.lineTo(px,py); });
+    ctx.stroke();
+    // 顶点圆点
+    ctx.fillStyle='#dc2626';
+    cPolyVerts.forEach(pt=>{ ctx.beginPath(); ctx.arc(pt.x*CPX,pt.y*CPY,4,0,7); ctx.fill(); });
+  }
+  // 模拟结果叠加（热力图）— 使用选中切片
+  if(slice){
+    const {UX,UY}=slice;
+    let maxV=0.01;
+    for(let i=0;i<CN;i++){ const v=Math.hypot(UX[i],UY[i]); if(v>maxV)maxV=v; }
+    for(let i=0;i<CN;i++){
+      const x=i%CNX, y=(i-x)/CNX;
+      const v=Math.hypot(UX[i],UY[i]);
+      if(v<0.001)continue;   // 跳过零速度格（切片中的固体）
+      const t=Math.min(v/maxV,1);
+      const r=Math.round(255*t), b=Math.round(255*(1-t));
+      ctx.fillStyle=`rgba(${r},${50},${b},.35)`;
+      ctx.fillRect(x*CPX,y*CPY,Math.ceil(CPX),Math.ceil(CPY));
+    }
+    // 风向标（按小区指北针方向）
+    const d=cEffWindDir()*Math.PI/180;
+    const wx=-Math.sin(d), wy=Math.cos(d);
+    ctx.strokeStyle='rgba(255,255,255,.5)'; ctx.lineWidth=1;
+    for(let p=0;p<400;p++){
+      const i=Math.floor(Math.random()*CN);
+      const x=i%CNX, y=(i-x)/CNX;
+      const ux=UX[i], uy=UY[i];
+      const mag=Math.hypot(ux,uy); if(mag<0.001)continue;
+      ctx.beginPath();
+      ctx.moveTo(x*CPX,y*CPY);
+      ctx.lineTo((x+ux/mag*3)*CPX,(y+uy/mag*3)*CPY);
+      ctx.stroke();
+    }
+    // 风向标
+    ctx.save(); ctx.translate(60,640);
+    ctx.fillStyle='rgba(255,255,255,.85)'; ctx.strokeStyle='#94a3b8';
+    ctx.beginPath(); ctx.arc(0,0,28,0,7); ctx.fill(); ctx.stroke();
+    const vx=wx,vy=wy;
+    ctx.strokeStyle='#2563eb'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo(-vx*18,-vy*18); ctx.lineTo(vx*18,vy*18); ctx.stroke();
+    ctx.fillStyle='#2563eb'; ctx.beginPath(); ctx.moveTo(vx*22,vy*22); ctx.lineTo(vx*12-vy*5,vy*12+vx*5); ctx.lineTo(vx*12+vy*5,vy*12-vx*5); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  // 户形标记
+  if(cTargetPos){
+    const x=cTargetPos.x*CPX, y=cTargetPos.y*CPY;
+    ctx.strokeStyle='#dc2626'; ctx.lineWidth=3; ctx.beginPath();
+    ctx.arc(x,y,18,0,7); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x-12,y); ctx.lineTo(x+12,y); ctx.moveTo(x,y-12); ctx.lineTo(x,y+12); ctx.stroke();
+    ctx.fillStyle='#dc2626'; ctx.font='bold 11px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('户形位置',x,y-24);
+  }
+  // 网格边界提示
+  ctx.strokeStyle='rgba(100,116,139,.15)'; ctx.lineWidth=1;
+  for(let x=0;x<=CNX;x+=10){ ctx.beginPath(); ctx.moveTo(x*CPX,0); ctx.lineTo(x*CPX,700); ctx.stroke(); }
+  for(let y=0;y<=CNY;y+=10){ ctx.beginPath(); ctx.moveTo(0,y*CPY); ctx.lineTo(1008,y*CPY); ctx.stroke(); }
+}
+
+/* ---- 楼栋重分类（多边形栅格化） ---- */
+function reclassifyComm(){
+  const polys=S.community.polygons;
+  cCell.fill(0); cellBuilding.fill(-1);
+  cBbox={x0:CNX,y0:CNY,x1:0,y1:0};
+  // 栅格化：每格中心做点在多边形内测试
+  for(let i=0;i<CN;i++){
+    const x=i%CNX, y=(i-x)/CNX;
+    const cx=x+0.5, cy=y+0.5;
+    for(let pi=0;pi<polys.length;pi++){
+      if(pointInPoly(cx,cy,polys[pi].points)){
+        cCell[i]=1; cellBuilding[i]=pi;
+        break;
+      }
+    }
+  }
+  // 同步 cSolid/cFluid
+  cSolid.fill(0); cFluid.fill(0);
+  for(let i=0;i<CN;i++){ if(cCell[i]) cSolid[i]=1; else cFluid[i]=1; }
+  // buildings 直接从 polygons 生成
+  S.community.buildings=polys.map((p,i)=>{
+    const name=p.name||String.fromCharCode(65+i);
+    let x0=CNX,y0=CNY,x1=0,y1=0;
+    for(const pt of p.points){ const gx=Math.round(pt.x),gy=Math.round(pt.y);
+      if(gx<x0)x0=gx; if(gx>x1)x1=gx; if(gy<y0)y0=gy; if(gy>y1)y1=gy; }
+    cBbox.x0=Math.min(cBbox.x0,x0); cBbox.y0=Math.min(cBbox.y0,y0);
+    cBbox.x1=Math.max(cBbox.x1,x1); cBbox.y1=Math.max(cBbox.y1,y1);
+    // 统计栅格面积
+    let cellCount=0;
+    for(let j=0;j<CN;j++) if(cellBuilding[j]===i) cellCount++;
+    return {cells:[],name,floors:p.floors||6,height:p.height||(p.floors||6)*3,area:cellCount*CDX*CDX,x0,y0,x1,y1};
+  });
+  renderCommInfo();
+}
+
+/* ---- 按切片高度重分类固体/流体 ---- */
+function reclassifyCommForSlice(sliceH){
+  cSolid.fill(0); cFluid.fill(0);
+  for(let i=0;i<CN;i++){
+    if(cCell[i]){
+      const bi=cellBuilding[i];
+      const b=bi>=0?S.community.buildings[bi]:null;
+      if(b && b.height>=sliceH) cSolid[i]=1; else cFluid[i]=1;
+    } else { cFluid[i]=1; }
+  }
+}
+
+/* ---- 小区侧栏 ---- */
+function renderCommInfo(){
+  const el=$('commInfo'); if(!el)return;
+  const blds=S.community.buildings;
+  let html=`<div class="fold" style="background:#f0fdf4;border-color:#bbf7d0">
+    <b>小区建模</b> · 网格 ${CNX}×${CNY} · 每格 ${CDX}m · 覆盖 ${CNX*CDX}m×${CNY*CDX}m<br>
+    <b>楼栋</b> ${blds.length} 栋 · <b>户形位置</b> ${cTargetPos?'已标记':'未标记'}<br>
+    <b>指北针</b> ${S.community.northDeg}° · <b>风向</b> ${dirName}风 ${S.windSpd}m/s（图纸上为${dir8Of(cEffWindDir())}侧）</div>`;
+  if(!blds.length){
+    html+=`<div class="empty-tip">点击「多边形画楼」→ 在画布上沿楼栋边缘依次点击顶点 → 双击或点击起点闭合 → 输入层数。<br>或上传平面图 → 标记户型位置 → 自动识别。</div>`;
+  } else {
+    html+='<table class="tbl" style="margin-top:6px"><tr><th>楼栋</th><th>面积</th><th>层数</th><th>高度m</th></tr>';
+    for(let i=0;i<blds.length;i++){
+      const b=blds[i];
+      const sel=i===cSelectedPoly?'background:#dbeafe':'';
+      html+=`<tr style="${sel}"><td>${b.name}</td><td class="num">${b.area.toFixed(0)}m²</td>
+        <td><input type="number" data-bi="${i}" class="b-floors" value="${b.floors}" min="1" max="50" style="width:48px"></td>
+        <td><input type="number" data-bi="${i}" class="b-height" value="${b.height}" min="3" step="3" style="width:56px"></td></tr>`;
+    }
+    html+='</table>';
+    html+='<div style="font-size:11px;color:var(--sub);margin-top:4px">点击楼栋可选中（蓝高亮）→ 复制/删除。默认一层=3m。</div>';
+  }
+  if(cTargetPos){
+    html+=`<div class="fold" style="margin-top:6px"><b>户形位置</b> 格(${cTargetPos.x},${cTargetPos.y}) = ${(cTargetPos.x*CDX).toFixed(1)}m, ${(cTargetPos.y*CDY).toFixed(1)}m<br><b>分析楼层</b> ${cTargetFloor} 层（${cTargetFloor*3}m 高度）</div>`;
+  }
+  if(S.community.sim){
+    const sim=S.community.sim;
+    const slices=sim.slices;
+    html+=`<div class="fold" style="margin-top:6px;background:#fef3c7;border-color:#fde68a">
+      <b>小区风场模拟完成</b> · ${slices.length} 个高度切片 · 耗时 ${sim.time.toFixed(1)}s<br>
+      <div style="margin-top:4px">`;
+    for(let si=0;si<slices.length;si++){
+      const s=slices[si];
+      const sel=si===cViewSlice?'<b>':'';
+      const unsel=si===cViewSlice?'</b>':'';
+      html+=`<button class="btn small" data-slice="${si}" style="margin:2px;${si===cViewSlice?'border-color:#f59e0b;background:#fef3c7':''}">${sel}${s.height}m${unsel}</button> `;
+    }
+    html+=`</div><div style="font-size:11px;color:var(--sub);margin-top:2px">点按钮切换查看不同高度切片。矮楼在高切片中穿透为流体。</div>`;
+    if(cTargetPos) html+=`<button class="btn small" id="btnDoExtract" style="margin-top:6px">提取局部风→户形</button>`;
+    html+='</div>';
+  }
+  el.innerHTML=html;
+  el.querySelectorAll('.b-floors').forEach(inp=>{ inp.onchange=()=>{ const i=+inp.dataset.bi;
+    const fl=+inp.value||6;
+    S.community.buildings[i].floors=fl; S.community.buildings[i].height=fl*3;
+    if(S.community.polygons[i]){ S.community.polygons[i].floors=fl; S.community.polygons[i].height=fl*3; }
+    renderCommInfo(); }; });
+  el.querySelectorAll('.b-height').forEach(inp=>{ inp.onchange=()=>{ const i=+inp.dataset.bi;
+    const h=+inp.value||18;
+    S.community.buildings[i].height=h; S.community.buildings[i].floors=Math.round(h/3);
+    if(S.community.polygons[i]){ S.community.polygons[i].height=h; S.community.polygons[i].floors=Math.round(h/3); }
+    renderCommInfo(); }; });
+  $('btnCopyPoly').disabled=cSelectedPoly<0;
+  $('btnDelPoly').disabled=cSelectedPoly<0;
+  const de=$('btnDoExtract'); if(de) de.onclick=()=>doExtractWind();
+  el.querySelectorAll('[data-slice]').forEach(btn=>{ btn.onclick=()=>{ cViewSlice=+btn.dataset.slice; drawComm(); renderCommInfo(); }; });
+}
+
+/* ---- 小区级 LBM ---- */
+function commLbmStep(){
+  const N=CN;
+  // 碰撞
+  for(let i=0;i<N;i++){ if(!cFluid[i])continue;
+    let r=0,ux=0,uy=0;
+    for(let k=0;k<9;k++){const f=cF[k*N+i]; r+=f; ux+=CX[k]*f; uy+=CY[k]*f;}
+    ux/=r; uy/=r;
+    if(!isFinite(ux)||!isFinite(uy)||!isFinite(r)){ r=1;ux=0;uy=0; const fe=new Float32Array(9); feqAll(1,0,0,fe); for(let k=0;k<9;k++)cF[k*N+i]=fe[k]; cRHO[i]=1;cUX[i]=0;cUY[i]=0; continue; }
+    cRHO[i]=r; cUX[i]=ux/r; cUY[i]=uy/r;
+    const usq=1.5*(ux*ux+uy*uy);
+    for(let k=0;k<9;k++){ const cu=3*(CX[k]*ux+CY[k]*uy);
+      const fe=W[k]*r*(1+cu+.5*cu*cu-usq);
+      cF[k*N+i]-= (cF[k*N+i]-fe)/TAU; }
+  }
+  // 流动（pull）
+  for(let y=0;y<CNY;y++)for(let x=0;x<CNX;x++){ const c=cIdx(x,y);
+    for(let k=0;k<9;k++){ const sx=x-CX[k], sy=y-CY[k];
+      cF2[k*N+c]= cInG(sx,sy)? cF[k*N+cIdx(sx,sy)] : cF[k*N+c]; } }
+  // 楼栋 bounce-back
+  for(let i=0;i<N;i++){ if(!cSolid[i])continue;
+    for(const k of [1,2,5,6]){ const o=OPP[k]; const a=k*N+i,b=o*N+i; const t=cF2[a]; cF2[a]=cF2[b]; cF2[b]=t; } }
+  // 各向异性边界条件
+  commEdgeBC(cF2);
+  const t=cF; cF=cF2; cF2=t;
+  // 宏观量
+  for(let i=0;i<N;i++){ if(!cFluid[i]){cUX[i]=0;cUY[i]=0;cRHO[i]=1;continue;}
+    let r=0,ux=0,uy=0; for(let k=0;k<9;k++){const f=cF[k*N+i]; r+=f; ux+=CX[k]*f; uy+=CY[k]*f;}
+    if(!isFinite(r)||!isFinite(ux)||!isFinite(uy)){r=1;ux=0;uy=0;}
+    cRHO[i]=r; cUX[i]=ux/r; cUY[i]=uy/r; }
+}
+function commEdgeBC(f){
+  // 来流侧（上风）：Dirichlet 注入均匀来流；出流侧（下风）：零梯度出流
+  const d=cEffWindDir()*Math.PI/180;
+  const wx=-Math.sin(d), wy=Math.cos(d);   // 风矢量
+  const uIn=S.windSpd*UMAX/computeMaxV();   // 入流速度（格）
+  const fe=new Float32Array(9);
+  const inflow=(x,y)=>{ feqAll(1, wx*uIn, wy*uIn, fe); for(let k=0;k<9;k++)f[k*CN+cIdx(x,y)]=fe[k]; };
+  const outflow=(x,y)=>{  // 零梯度：复制内侧邻居
+    const ix=Math.max(0,Math.min(CNX-1,x+(wx>0?-1:1)));
+    const iy=Math.max(0,Math.min(CNY-1,y+(wy>0?-1:1)));
+    for(let k=0;k<9;k++)f[k*CN+cIdx(x,y)]=f[k*CN+cIdx(ix,iy)];
+  };
+  // 四条边：根据风向判定入流/出流
+  // 上边(y=0)：风从上方来(wy<0)时入流
+  for(let x=0;x<CNX;x++){
+    if(wy<0) inflow(x,0); else outflow(x,0);
+    if(wy>0) inflow(x,CNY-1); else outflow(x,CNY-1);
+  }
+  for(let y=0;y<CNY;y++){
+    if(wx<0) inflow(0,y); else outflow(0,y);
+    if(wx>0) inflow(CNX-1,y); else outflow(CNX-1,y);
+  }
+  // 角落：海绵层弛豫
+  for(let x=0;x<2;x++)for(let y=0;y<2;y++){
+    [cIdx(x,y),cIdx(CNX-1-x,y),cIdx(x,CNY-1-y),cIdx(CNX-1-x,CNY-1-y)].forEach(c=>{
+      let r=0,ux=0,uy=0; for(let k=0;k<9;k++){const fv=f[k*CN+c]; r+=fv; ux+=CX[k]*fv; uy+=CY[k]*fv;}
+      ux/=(r||1); uy/=(r||1); if(!isFinite(r)||r<=0){r=1;ux=0;uy=0;}
+      feqAll(1+(r-1)*0,ux*0,uy*0,fe); for(let k=0;k<9;k++)f[k*CN+c]=fe[k];   // 角落强制静压
+    });
+  }
+}
+
+/* ---- 小区模拟（多高度切片） ---- */
+async function runCommSim(){
+  if(!S.community.buildings.length){ alert('请先画楼栋轮廓'); return; }
+  $('btnRunComm').disabled=true;
+  // 生成切片高度列表：确保覆盖用户楼层高度 + 最高楼栋，最多 6 层
+  const heights=[...new Set(S.community.buildings.map(b=>b.height))].sort((a,b)=>a-b);
+  const floorH=cTargetFloor*3;   // 用户户型楼层高度
+  // 必含切片：最低楼栋高度 + 用户楼层高度 + 最高楼栋高度
+  let sliceHeights=new Set([heights[0], floorH, heights[heights.length-1]]);
+  // 补充其他楼栋高度，直到达到 6 个
+  for(const h of heights){ if(sliceHeights.size>=6)break; sliceHeights.add(h); }
+  // 如果还有余量，在 [最低, 最高] 间均匀补
+  const hMin=heights[0], hMax=heights[heights.length-1];
+  if(sliceHeights.size<4){
+    for(let i=1;i<=3;i++){ const h=Math.round((hMin+(hMax-hMin)*i/4)/3)*3; sliceHeights.add(h); }
+  }
+  sliceHeights=[...sliceHeights].sort((a,b)=>a-b);
+  // 确保用户楼层高度在切片中（向上取整到最近的切片）
+
+  const slices=[];
+  const t0=Date.now();
+  for(let si=0;si<sliceHeights.length;si++){
+    const sh=sliceHeights[si];
+    $('commInfo').innerHTML=`<div class="empty-tip">小区风场模拟中... 切片 ${si+1}/${sliceHeights.length}（高度 ${sh}m）</div>`;
+    reclassifyCommForSlice(sh);
+    // 初始化 LBM 场
+    cF=new Float32Array(9*CN); cF2=new Float32Array(9*CN);
+    cRHO=new Float32Array(CN); cUX=new Float32Array(CN); cUY=new Float32Array(CN);
+    const d=cEffWindDir()*Math.PI/180;
+    const wx=-Math.sin(d), wy=Math.cos(d);
+    const uIn=S.windSpd*UMAX/computeMaxV();
+    const fe=new Float32Array(9);
+    for(let i=0;i<CN;i++){
+      if(cFluid[i]){ feqAll(1, wx*uIn, wy*uIn, fe); for(let k=0;k<9;k++)cF[k*CN+i]=fe[k]; }
+      else { feqAll(1,0,0,fe); for(let k=0;k<9;k++)cF[k*CN+i]=fe[k]; }
+    }
+    const steps=2000, checkEvery=300;
+    let converged=false;
+    for(let step=1;step<=steps;step++){
+      commLbmStep();
+      if(step%checkEvery===0){
+        let maxRho=0;
+        for(let i=0;i<CN;i++){ if(cFluid[i]){ const dr=Math.abs(cRHO[i]-1); if(dr>maxRho)maxRho=dr; } }
+        if(maxRho<0.01 && step>400){ converged=true; break; }
+      }
+      if(step%500===0) await new Promise(r=>setTimeout(r,0));
+    }
+    slices.push({height:sh, UX:cUX.slice(), UY:cUY.slice(), RHO:cRHO.slice(), converged});
+  }
+  // 恢复全高分类（用于绘制楼栋和后续交互）
+  cSolid.fill(0); cFluid.fill(0);
+  for(let i=0;i<CN;i++){ if(cCell[i])cSolid[i]=1; else cFluid[i]=1; }
+
+  S.community.sim={ slices, time:(Date.now()-t0)/1000 };
+  cViewSlice=slices.length-1;   // 默认显示最高切片
+  $('btnRunComm').disabled=false;
+  $('btnExtractWind').disabled=!cTargetPos;
+  drawComm(); renderCommInfo();
+}
+
+/* ---- 提取局部风向风速 → 写入户形 localWind ---- */
+function doExtractWind(){
+  if(!S.community.sim||!cTargetPos){ alert('请先完成小区模拟并标记户形位置'); return; }
+  const slices=S.community.sim.slices;
+  // 找到户形位置所在楼栋
+  const ti=cIdx(cTargetPos.x,cTargetPos.y);
+  const bi=cellBuilding[ti];
+  const tb=bi>=0?S.community.buildings[bi]:null;
+  const floorH=cTargetFloor*3;   // 用户楼层高度
+  // 选切片：最接近楼层高度的切片（优先选 >= 楼层高度的，确保矮楼已穿透）
+  let bestSlice=slices[0];
+  for(const s of slices){
+    if(s.height>=floorH){ bestSlice=s; break; }
+    bestSlice=s;   // 持续更新为 <= floorH 的最高切片
+  }
+  const {UX,UY}=bestSlice;
+  // 在户形位置周围 5×5 格采样平均风矢量
+  let sx=0, sy=0, n=0;
+  for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
+    const x=cTargetPos.x+dx, y=cTargetPos.y+dy;
+    if(!cInG(x,y))continue; const i=cIdx(x,y);
+    // 楼栋内部格也采样（切片中矮楼已穿透为流体）
+    sx+=UX[i]*computeMaxV()/UMAX; sy+=UY[i]*computeMaxV()/UMAX; n++;
+  }
+  if(!n){ alert('户形位置在边界外，请重新标记'); return; }
+  const vx=sx/n, vy=sy/n;
+  const spd=Math.hypot(vx,vy);
+  // 图纸坐标的风向 → 真实方位角（减去小区指北针偏角）
+  const dScreen=Math.atan2(-vx,vy)*180/Math.PI;
+  const dReal=((dScreen-S.community.northDeg)%360+360)%360;
+  // 写入每扇窗的 localWind
+  for(const w of S.wins){
+    if(!w.localWind) w.localWind={dir:0,spd:0};
+    w.localWind.dir=Math.round(dReal/5)*5;
+    w.localWind.spd=Math.round(spd*10)/10;
+  }
+  S.useLocalWind=true;
+  S.localWindSource='community';
+  const bName=tb?tb.name:'（楼栋外）';
+  const bFloors=tb?Math.round(tb.height/3):0;
+  alert(`提取完成（切片高度 ${bestSlice.height}m，${bName} 共${bFloors}层，分析楼层 ${cTargetFloor}层 ${floorH}m）：\n局部风向 ${Math.round(dReal)}° 风速 ${spd.toFixed(1)} m/s\n已写入 ${S.wins.length} 扇窗的实测覆盖，并启用逐窗风场覆盖。`);
+  markDirty(); renderWindFace();
+  document.querySelector('nav button[data-view="sim"]').click();
+}
+
+/* ---- 小区画布交互 ---- */
+$('cvC').addEventListener('mousedown',e=>{
+  const[x,y]=cCanvasPos($('cvC'),e);
+  // 标记户型位置
+  if(S.community.ctool==='mark'){
+    cTargetPos={x:Math.round(x), y:Math.round(y)};
+    const v=prompt('请输入待分析户型所在楼层：', cTargetFloor||1);
+    if(v!==null) cTargetFloor=Math.max(1,+v||1);
+    drawComm(); renderCommInfo();
+    if(S.community.planImg) autoDetectComm();
+    return;
+  }
+  // 多边形画楼
+  if(S.community.ctool==='poly'){
+    // 放置粘贴
+    if(cPlacingPaste && cCopiedPoly){
+      const center=polyCenter(cCopiedPoly.points);
+      const dx=Math.round(x)-center.x, dy=Math.round(y)-center.y;
+      const newPts=cCopiedPoly.points.map(p=>({x:p.x+dx,y:p.y+dy}));
+      const v=prompt('请输入楼栋层数：', cCopiedPoly.floors||6);
+      const floors=v!==null?Math.max(1,+v||6):(cCopiedPoly.floors||6);
+      S.community.polygons.push({points:newPts,floors,height:floors*3});
+      cPlacingPaste=false; cCopiedPoly=null;
+      reclassifyComm(); drawComm(); renderCommInfo();
+      return;
+    }
+    // 选中已有楼栋（点击在多边形内）
+    if(!cPolyDrawing){
+      for(let i=S.community.polygons.length-1;i>=0;i--){
+        if(pointInPoly(x,y,S.community.polygons[i].points)){
+          cSelectedPoly=i;
+          drawComm(); renderCommInfo();
+          return;
+        }
+      }
+      cSelectedPoly=-1;
+    }
+    // 正在画 → 加顶点
+    if(cPolyDrawing){
+      // 靠近第一个顶点 → 闭合
+      if(cPolyVerts.length>=3){
+        const f=cPolyVerts[0];
+        if(Math.hypot(x-f.x,y-f.y)<2){ finishPoly(); return; }
+      }
+      cPolyVerts.push({x,y});
+    } else {
+      cPolyDrawing=true;
+      cPolyVerts=[{x,y}];
+    }
+    drawComm();
+    return;
+  }
+  // 笔刷画楼/橡皮
+  cPainting=true; cLineStart=[Math.round(x),Math.round(y)];
+  if(S.community.ctool==='erase'){
+    paintComm(x,y,S.community.cbrush,0);
+  } else {
+    paintComm(x,y,S.community.cbrush,1);
+  }
+});
+$('cvC').addEventListener('mousemove',e=>{
+  const[x,y]=cCanvasPos($('cvC'),e);
+  // 多边形预览
+  if(cPolyDrawing){
+    cPolyPreview={x,y};
+    drawComm();
+    // 绘制预览线
+    const ctx=$('cvC').getContext('2d');
+    const last=cPolyVerts[cPolyVerts.length-1];
+    ctx.strokeStyle='rgba(220,38,38,.6)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(last.x*CPX,last.y*CPY); ctx.lineTo(x*CPX,y*CPY); ctx.stroke();
+    // 靠近起点时显示闭合提示
+    if(cPolyVerts.length>=3){
+      const f=cPolyVerts[0];
+      if(Math.hypot(x-f.x,y-f.y)<2){
+        ctx.strokeStyle='rgba(34,197,94,.8)'; ctx.lineWidth=3;
+        ctx.beginPath(); ctx.arc(f.x*CPX,f.y*CPY,8,0,Math.PI*2); ctx.stroke();
+      }
+    }
+    return;
+  }
+  // 粘贴预览
+  if(cPlacingPaste && cCopiedPoly){
+    drawComm();
+    const ctx=$('cvC').getContext('2d');
+    const center=polyCenter(cCopiedPoly.points);
+    const dx=x-center.x, dy=y-center.y;
+    ctx.fillStyle='rgba(34,197,94,.3)'; ctx.strokeStyle='rgba(34,197,94,.8)'; ctx.lineWidth=2;
+    ctx.beginPath();
+    cCopiedPoly.points.forEach((p,i)=>{ const px=(p.x+dx)*CPX, py=(p.y+dy)*CPY; i===0?ctx.moveTo(px,py):ctx.lineTo(px,py); });
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    return;
+  }
+  if(!cPainting)return;
+  if(S.community.cbrushMode==='line'&&cLineStart){
+    drawComm();
+    const ctx=$('cvC').getContext('2d');
+    ctx.strokeStyle='rgba(220,38,38,.5)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(cLineStart[0]*CPX,cLineStart[1]*CPY); ctx.lineTo(x*CPX,y*CPY); ctx.stroke();
+    return;
+  }
+  paintComm(x,y,S.community.cbrush, S.community.ctool==='erase'?0:1);
+});
+$('cvC').addEventListener('mouseup',e=>{
+  if(!cPainting)return;
+  if(S.community.cbrushMode==='line'&&cLineStart){
+    const[x,y]=cCanvasPos($('cvC'),e);
+    drawLineComm(cLineStart[0],cLineStart[1],Math.round(x),Math.round(y), S.community.ctool==='erase'?0:1);
+  }
+  cPainting=false; cLineStart=null;
+  reclassifyComm(); drawComm();
+});
+$('cvC').addEventListener('dblclick',e=>{
+  if(cPolyDrawing && cPolyVerts.length>=3) finishPoly();
+});
+$('cvC').addEventListener('mouseleave',()=>{ cPainting=false; cLineStart=null; drawComm(); });
+
+/* ---- 完成多边形绘制 ---- */
+function finishPoly(){
+  if(cPolyVerts.length<3){ cPolyDrawing=false; cPolyVerts=[]; drawComm(); return; }
+  const v=prompt('请输入楼栋层数：', '6');
+  const floors=v!==null?Math.max(1,+v||6):6;
+  S.community.polygons.push({points:cPolyVerts.slice(),floors,height:floors*3});
+  cPolyDrawing=false; cPolyVerts=[]; cPolyPreview=null;
+  reclassifyComm(); drawComm();
+}
+
+function paintComm(x,y,brush,val){
+  const bx=Math.round(x), by=Math.round(y), h=Math.floor(brush/2);
+  for(let dy=-h;dy<=h+1;dy++)for(let dx=-h;dx<=h+1;dx++){
+    const nx=bx+dx, ny=by+dy;
+    if(cInG(nx,ny)) cCell[cIdx(nx,ny)]=val;
+  }
+  drawComm();
+}
+function drawLineComm(x0,y0,x1,y1,val){
+  const dx=Math.abs(x1-x0), dy=Math.abs(y1-y0);
+  const sx=x0<x1?1:-1, sy=y0<y1?1:-1;
+  let err=dx-dy, h=Math.floor(S.community.cbrush/2);
+  let cx=x0, cy=y0;
+  while(true){
+    for(let dy2=-h;dy2<=h+1;dy2++)for(let dx2=-h;dx2<=h+1;dx2++){
+      const nx=cx+dx2, ny=cy+dy2;
+      if(cInG(nx,ny)) cCell[cIdx(nx,ny)]=val;
+    }
+    if(cx===x1&&cy===y1)break;
+    const e2=2*err;
+    if(e2>-dy){ err-=dy; cx+=sx; }
+    if(e2<dx){ err+=dx; cy+=sy; }
+  }
+}
+
+/* ---- 小区工具栏 ---- */
+document.querySelectorAll('[data-ctool]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-ctool]').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  S.community.ctool=b.dataset.ctool;
+  $('cvC').style.cursor = S.community.ctool==='mark' ? 'pointer' : 'crosshair';
+});
+$('cBrushSize').onchange=e=>S.community.cbrush=+e.target.value;
+$('cBrushMode').onchange=e=>S.community.cbrushMode=e.target.value;
+$('btnClearComm').onclick=()=>{ if(confirm('清空小区画布？')){ cCell.fill(0); cTargetPos=null; S.community.sim=null; S.community.buildings=[]; reclassifyComm(); drawComm(); } };
+$('btnRunComm').onclick=()=>runCommSim();
+$('btnExtractWind').onclick=()=>doExtractWind();
+$('planOpacity').oninput=e=>{ S.community.planOpacity=+e.target.value; drawComm(); };
+$('btnPlanImg').onclick=()=>$('planFile').click();
+$('planFile').onchange=e=>{
+  const f=e.target.files[0]; if(!f)return;
+  const img=new Image(); const url=URL.createObjectURL(f);
+  img.onload=()=>{ URL.revokeObjectURL(url); S.community.planImg=img; drawComm(); };
+  img.onerror=()=>URL.revokeObjectURL(url);
+  img.src=url;
+};
+
+/* ---- 自动识别楼栋 ---- */
+function autoDetectComm(){
+  if(!S.community.planImg){ alert('请先上传楼盘平面图'); return; }
+  const img=S.community.planImg;
+  const oc=document.createElement('canvas'); oc.width=CNX; oc.height=CNY;
+  const octx=oc.getContext('2d');
+  // 等比覆盖绘制
+  const sc=Math.max(CNX/img.width, CNY/img.height);
+  const w=img.width*sc, h=img.height*sc;
+  octx.drawImage(img,(CNX-w)/2,(CNY-h)/2,w,h);
+  const data=octx.getImageData(0,0,CNX,CNY).data;
+  const lumAt=(gx,gy)=>{ const i=(gy*CNX+gx)*4; if(i<0||i+3>=data.length)return 128;
+    return 0.299*data[i]+0.587*data[i+1]+0.114*data[i+2]; };
+  // 中位数计算
+  const median=arr=>{ if(!arr.length)return 128; const s=[...arr].sort((a,b)=>a-b); return s[Math.floor(s.length/2)]; };
+  // 极性判定：用户手动覆盖 > 自动检测
+  let polarity=cPolarity;
+  let autoThreshold=128;
+  if(cTargetPos && polarity==='auto'){
+    // 标记处周围 5×5 采样 → 中位数 = 楼栋亮度
+    const bSamples=[];
+    for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
+      bSamples.push(lumAt(Math.max(0,Math.min(CNX-1,cTargetPos.x+dx)), Math.max(0,Math.min(CNY-1,cTargetPos.y+dy))));
+    }
+    const bLum=median(bSamples);
+    // 外缘两圈采样 → 中位数 = 背景亮度
+    const bgSamples=[];
+    for(let x=0;x<CNX;x++)for(let y=0;y<2;y++){ bgSamples.push(lumAt(x,y)); bgSamples.push(lumAt(x,CNY-1-y)); }
+    for(let y=0;y<CNY;y++)for(let x=0;x<2;x++){ if(x<0||x>=CNX)continue; bgSamples.push(lumAt(x,y)); bgSamples.push(lumAt(CNX-1-x,y)); }
+    const bgLum=median(bgSamples);
+    polarity = bLum >= bgLum ? 'light' : 'dark';
+    autoThreshold=Math.round((bLum+bgLum)/2);
+    const slider=$('detectThreshold');
+    if(slider && +slider.value===128) slider.value=Math.max(40,Math.min(220,autoThreshold));
+  }
+  const polarityLabel=$('polarityLabel');
+  if(polarityLabel) polarityLabel.textContent = polarity==='dark'?'深色楼栋' : polarity==='light'?'浅色楼栋':'自动';
+  const threshold=+$('detectThreshold').value||autoThreshold;
+  // 二值化（根据极性决定方向）
+  const bin=new Uint8Array(CN);
+  for(let i=0;i<CN;i++){
+    const r=data[i*4], g=data[i*4+1], b=data[i*4+2], a=data[i*4+3];
+    const lum=0.299*r+0.587*g+0.114*b;
+    if(a<100) continue;
+    if(polarity==='dark'){ if(lum<threshold) bin[i]=1; }
+    else { if(lum>threshold) bin[i]=1; }   // 浅色=楼栋
+  }
+  // 形态学清理：腐蚀（去掉 1-2 格孤立碎片）→ 膨胀（恢复边缘）
+  const tmp=new Uint8Array(CN);
+  for(let pass=0;pass<2;pass++){
+    for(let y=0;y<CNY;y++)for(let x=0;x<CNX;x++){ const i=cIdx(x,y);
+      if(!bin[i])continue;
+      let cnt=0;
+      for(const[dx,dy]of[[-1,0],[1,0],[0,-1],[0,1]]) if(cInG(x+dx,y+dy)&&bin[cIdx(x+dx,y+dy)])cnt++;
+      tmp[i]=cnt>=2?1:0;
+    }
+    bin.set(tmp);
+  }
+  for(let pass=0;pass<2;pass++){
+    for(let y=0;y<CNY;y++)for(let x=0;x<CNX;x++){ const i=cIdx(x,y);
+      if(bin[i])continue;
+      let cnt=0;
+      for(const[dx,dy]of[[-1,0],[1,0],[0,-1],[0,1]]) if(cInG(x+dx,y+dy)&&bin[cIdx(x+dx,y+dy)])cnt++;
+      tmp[i]=cnt>=3?1:0;
+    }
+    for(let i=0;i<CN;i++) if(tmp[i])bin[i]=1;
+  }
+  cCell.set(bin);
+  // 连通域 → 多边形轮廓追踪
+  const visited=new Uint8Array(CN);
+  const polys=[];
+  for(let i=0;i<CN;i++){
+    if(cCell[i]&&!visited[i]){
+      const queue=[i]; visited[i]=1; const cells=[];
+      while(queue.length){ const c=queue.shift(); cells.push(c);
+        const x=c%CNX,y=(c-x)/CNX;
+        for(const[dx,dy]of[[-1,0],[1,0],[0,-1],[0,1]]){
+          const nx=x+dx,ny=y+dy;
+          if(cInG(nx,ny)){ const ni=cIdx(nx,ny); if(cCell[ni]&&!visited[ni]){ visited[ni]=1; queue.push(ni); } }
+        }
+      }
+      if(cells.length<4) continue;
+      // 轮廓追踪 → 多边形顶点
+      const cellSet=new Set(cells);
+      const contour=traceContour(cellSet, cells);
+      if(contour.length>=3) polys.push({points:contour, floors:6, height:18});
+    }
+  }
+  S.community.polygons=polys;
+  reclassifyComm(); drawComm();
+  return {buildings:polys.length, polarity};
+}
+
+/* ---- 轮廓追踪（Moore 8 连通顺时针） ---- */
+function traceContour(cellSet, cells){
+  // 起点：最上最左
+  let start=cells[0];
+  for(const c of cells){ const x=c%CNX,y=(c-x)/CNX; const sx=start%CNX,sy=(start-sx)/CNX;
+    if(y<sy||(y===sy&&x<sx)) start=c; }
+  const dirs=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+  const contour=[]; let cur=start, pdir=6;
+  do{
+    const x=cur%CNX,y=(cur-x)/CNX;
+    contour.push({x:x+0.5,y:y+0.5});
+    let found=false;
+    for(let i=0;i<8;i++){ const d=(pdir+6+i)%8; const nx=x+dirs[d][0],ny=y+dirs[d][1];
+      if(nx>=0&&nx<CNX&&ny>=0&&ny<CNY&&cellSet.has(ny*CNX+nx)){ cur=ny*CNX+nx; pdir=d; found=true; break; } }
+    if(!found)break;
+  }while(cur!==start&&contour.length<5000);
+  // 简化：去除共线点 + 间距过近点
+  const s1=[];
+  for(let i=0;i<contour.length;i++){ const p=contour[(i-1+contour.length)%contour.length], c=contour[i], n=contour[(i+1)%contour.length];
+    if(Math.abs((c.x-p.x)*(n.y-c.y)-(c.y-p.y)*(n.x-c.x))>0.01) s1.push(c); }
+  const s2=[];
+  for(let i=0;i<s1.length;i++){ const p=s2.length?s2[s2.length-1]:s1[s1.length-1];
+    if(Math.hypot(s1[i].x-p.x,s1[i].y-p.y)>1.5) s2.push(s1[i]); }
+  return s2.length>=3?s2:s1;
+}
+
+/* ---- 小区指北针 ---- */
+const cEffWindDir=()=>((S.windDir+S.community.northDeg)%360+360)%360;
+function setCNorth(deg){
+  S.community.northDeg=((Math.round(deg)%360)+360)%360;
+  const g=document.getElementById('cCompassG'); if(g) g.setAttribute('transform',`rotate(${S.community.northDeg})`);
+  drawComm();
+}
+(function(){
+  const svg=document.getElementById('cCompassSvg'); if(!svg)return;
+  let drag=false;
+  svg.addEventListener('pointerdown',e=>{ drag=true; svg.setPointerCapture(e.pointerId); svg.style.cursor='grabbing'; e.preventDefault(); });
+  svg.addEventListener('pointermove',e=>{
+    if(!drag)return;
+    const r=svg.getBoundingClientRect();
+    const cx=r.left+r.width/2, cy=r.top+r.height/2;
+    const ang=Math.atan2(e.clientX-cx, -(e.clientY-cy))*180/Math.PI;
+    setCNorth(ang);
+  });
+  svg.addEventListener('pointerup',()=>{ drag=false; svg.style.cursor='grab'; });
+  svg.addEventListener('pointercancel',()=>{ drag=false; svg.style.cursor='grab'; });
+})();
+
+/* ---- 点击楼栋编辑层数 ---- */
+$('cvC').addEventListener('click',e=>{
+  if(S.community.ctool!=='mark' && S.community.ctool!=='bldg')return;
+  if(cPainting)return;
+  const[x,y]=cCanvasPos($('cvC'),e);
+  const bx=Math.round(x), by=Math.round(y);
+  if(!cInG(bx,by))return;
+  const i=cIdx(bx,by);
+  if(!cCell[i])return;
+  const bi=S.community.buildings.findIndex(b=>b.cells.includes(i));
+  if(bi<0)return;
+  const b=S.community.buildings[bi];
+  const v=prompt(`楼栋 ${b.name}（${b.area.toFixed(0)}m²）\n层数：`, b.floors);
+  if(v===null)return;
+  const floors=Math.max(1,Math.min(50,+v||6));
+  b.floors=floors; b.height=floors*3;
+  drawComm();
+  const ctx=$('cvC').getContext('2d');
+  ctx.strokeStyle='#fbbf24'; ctx.lineWidth=3; ctx.strokeRect(b.x0*CPX,b.y0*CPY,(b.x1-b.x0+1)*CPX,(b.y1-b.y0+1)*CPY);
+  setTimeout(()=>drawComm(),600);
+  renderCommInfo();
+});
+$('btnAutoDetect').onclick=()=>autoDetectComm();
+$('btnFlipPolarity').onclick=()=>{
+  cPolarity = cPolarity==='dark' ? 'light' : cPolarity==='light' ? 'auto' : 'dark';
+  const labels={dark:'深色楼栋',light:'浅色楼栋',auto:'自动'};
+  $('polarityLabel').textContent=labels[cPolarity];
+  if(S.community.planImg) autoDetectComm();
+};
+$('btnCopyPoly').onclick=()=>{
+  if(cSelectedPoly<0||!S.community.polygons[cSelectedPoly])return;
+  cCopiedPoly={...S.community.polygons[cSelectedPoly], points:S.community.polygons[cSelectedPoly].points.map(p=>({...p}))};
+  cPlacingPaste=true;
+  alert('已复制楼栋，请在画布上点击新位置放置（可输入不同层数）');
+};
+$('btnDelPoly').onclick=()=>{
+  if(cSelectedPoly<0)return;
+  S.community.polygons.splice(cSelectedPoly,1);
+  cSelectedPoly=-1;
+  $('btnCopyPoly').disabled=true; $('btnDelPoly').disabled=true;
+  reclassifyComm(); drawComm();
+};
+
 /* ================= 启动 ================= */
 fillCitySel();
 const restored=restore();
 if(!restored){ buildDemo(); reclassify(); nameDemoZones(); }
 applyCityWindUI(); updateNorthHint();
 drawModel(); drawBase(offBase.getContext('2d'),false);
+drawComm(); renderCommInfo();
 renderFanList(); renderScen();
 window.addEventListener('beforeunload',persist);
 setInterval(()=>{ if(needPersist) persist(); },30000);   // 仅在有改动时序列化（不再无条件每 30s 全量写）
+$('btnUndo').onclick=doUndo;
+$('btnRedo').onclick=doRedo;
+document.addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){ e.preventDefault(); e.shiftKey?doRedo():doUndo(); }
+  else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='y'){ e.preventDefault(); doRedo(); }
+});
 // 首次进入自动演示：切到模拟页并运行（?nodemo=1 可跳过，便于自动化测试与截图）
 if(!restored && !/[?&]nodemo=1\b/.test(location.search)){
   setTimeout(()=>{
