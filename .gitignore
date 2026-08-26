@@ -1,6 +1,12 @@
 # WorkBuddy 本地数据（记忆/技能，不发布）
 .workbuddy/
 
+# 测试/诊断脚本（开发用，不发布）
+_test/
+
+# 诊断报告（开发用）
+*.md
+
 # 系统文件
 Thumbs.db
 .DS_Store
