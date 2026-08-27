@@ -82,7 +82,7 @@ table.tbl td.num{text-align:right; font-variant-numeric:tabular-nums;}
 .report th,.report td{border:1px solid var(--line); padding:6px 10px; text-align:center;}
 .report th{background:#f1f5f9;}
 .disclaimer{background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:12px; font-size:12px; line-height:1.8; color:#78350f;}
-.legend-bar{height:10px; border-radius:5px; background:linear-gradient(90deg,#313695,#4575b4,#74add1,#abd9e9,#ffffbf,#fee090,#fdae61,#f46d43,#d73027);}
+.legend-bar{height:10px; border-radius:5px; background:linear-gradient(90deg,#1a1c4a,#2646a0,#1d74c8,#0ea5d2,#14b8a6,#84cc16,#a3e635,#facc15,#fb923c,#ef4444,#dc2626,#7f0026);}
 canvas.chart{width:100%; height:150px; border:1px solid var(--line); border-radius:8px; background:#fff;}
 .fold{background:#f8fafc; border-radius:8px; padding:8px 12px; margin-top:8px; font-size:12px; color:var(--sub); line-height:1.8;}
 .empty-tip{color:var(--sub); text-align:center; padding:30px;}
@@ -703,8 +703,11 @@ function drawBase(ctx,showZones){
   }
 }
 function heatColor(t){
-  const stops=[[0.00,[49,54,149]],[0.15,[69,117,180]],[0.30,[116,173,209]],[0.45,[171,217,238]],[0.55,[255,255,191]],[0.68,[254,224,144]],[0.80,[253,174,97]],[0.90,[244,109,67]],[1.00,[165,0,54]]];
+  // 12-stop modern gradient: deep indigo → blue → cyan → teal → green → lime → yellow → amber → orange → red → crimson
+  const stops=[[0.00,[26,28,74]],[0.08,[38,70,160]],[0.18,[29,116,200]],[0.28,[14,165,210]],[0.38,[20,184,166]],[0.48,[132,204,22]],[0.58,[163,230,53]],[0.68,[250,204,21]],[0.78,[251,146,60]],[0.88,[239,68,68]],[0.95,[220,38,38]],[1.00,[127,0,38]]];
   t=Math.max(0,Math.min(1,t));
+  // gamma curve for better mid-range visibility
+  t=Math.pow(t,0.82);
   for(let i=0;i<stops.length-1;i++){ if(t<=stops[i+1][0]){ const a=stops[i],b=stops[i+1]; const f=(t-a[0])/(b[0]-a[0]);
     return [a[1][0]+(b[1][0]-a[1][0])*f, a[1][1]+(b[1][1]-a[1][1])*f, a[1][2]+(b[1][2]-a[1][2])*f]; } }
   return stops[stops.length-1][1];
@@ -719,7 +722,7 @@ function renderHeat(){
     const t=sp/sim.vmax;
     const [r,g,b]=heatColor(t);
     d[o]=r; d[o+1]=g; d[o+2]=b;
-    d[o+3]= (c===C_INT||c===C_WIN||c===C_DOORO)? 200 : (c===C_FURN2? 140 : 60);
+    d[o+3]= (c===C_INT||c===C_WIN||c===C_DOORO)? 225 : (c===C_FURN2? 160 : 60);
   }
   ctx.putImageData(img,0,0);
 }
@@ -740,27 +743,73 @@ function drawSim(ts){
   ctx.clearRect(0,0,1008,700);
   ctx.imageSmoothingEnabled=true;
   ctx.drawImage(offBase,0,0);
-  if($('ckHeat').checked&&S.sim){ ctx.globalAlpha=.92; ctx.drawImage(offHeat,0,0,1008,700); ctx.globalAlpha=1; }
+  if($('ckHeat').checked&&S.sim){
+    // 热力图：双 pass 合成——先模糊扩散做发光底，再叠加锐利层
+    ctx.save();
+    ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high';
+    // Pass 1: 模糊发光底（降低分辨率+放大插值产生天然平滑）
+    ctx.globalAlpha=0.35; ctx.filter='blur(4px)';
+    ctx.drawImage(offHeat,0,0,1008,700);
+    ctx.filter='none';
+    // Pass 2: 锐利叠加层
+    ctx.globalAlpha=0.82; ctx.globalCompositeOperation='screen';
+    ctx.drawImage(offHeat,0,0,1008,700);
+    ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
+    ctx.restore();
+  }
   const sim=S.sim;
   if(sim){
     const dt=Math.min((ts-lastT)/1000,.1)||.05; lastT=ts;
     if($('ckPart').checked){
-      ctx.strokeStyle='rgba(30,41,59,.55)'; ctx.lineWidth=1.2; ctx.beginPath();
+      // 粒子：速度着色 + 发光叠加 + 拖尾渐变
+      ctx.save();
+      ctx.globalCompositeOperation='lighter';
+      ctx.lineCap='round';
       for(let i=0;i<PART_N;i++){
         if(pLife[i]<=0){respawn(i);continue;}
         const cx=pX[i]|0, cy=pY[i]|0; if(!inG(cx,cy)||!fluidAt(idx(cx,cy))){respawn(i);continue;}
-        const u=sim.ux[idx(cx,cy)], v=sim.uy[idx(cx,cy)];
+        const ii=idx(cx,cy);
+        const u=sim.ux[ii], v=sim.uy[ii];
+        const spd=Math.hypot(u,v);
+        const t=Math.min(spd/sim.vmax,1);
+        const [r,g,b]=heatColor(t);
         const nx2=pX[i]+u*dt/DX, ny2=pY[i]+v*dt/DX;
-        ctx.moveTo(pX[i]*PX,pY[i]*PX); ctx.lineTo(nx2*PX,ny2*PX);
+        // 速度越高 → 线越粗、越亮
+        const lw=0.8+t*1.8;
+        const lifeRatio=pLife[i]/(pLife[i]>150?300:150);
+        const fade=Math.min(lifeRatio*3,1)*Math.min((pLife[i]<40?pLife[i]/40:1),1);
+        const alpha=0.22+t*0.55*fade;
+        ctx.strokeStyle=`rgba(${r|0},${g|0},${b|0},${alpha})`;
+        ctx.lineWidth=lw;
+        ctx.beginPath();
+        ctx.moveTo(pX[i]*PX,pY[i]*PX);
+        ctx.lineTo(nx2*PX,ny2*PX);
+        ctx.stroke();
         pX[i]=nx2; pY[i]=ny2; pLife[i]--;
-      } ctx.stroke();
+      }
+      ctx.restore();
     }
     if($('ckVec').checked){
-      ctx.strokeStyle='rgba(51,65,85,.5)';
-      for(let y=2;y<NY;y+=5)for(let x=2;x<NX;x+=5){ const i=idx(x,y); if(!fluidAt(i))continue;
+      // 矢量场：速度着色 + 箭头头
+      for(let y=3;y<NY;y+=5)for(let x=3;x<NX;x+=5){
+        const i=idx(x,y); if(!fluidAt(i))continue;
         const u=sim.ux[i],v=sim.uy[i]; const l=Math.hypot(u,v); if(l<.03)continue;
-        const k=Math.min(l/sim.vmax,1)*10;
-        ctx.beginPath(); ctx.moveTo(x*PX,y*PX); ctx.lineTo(x*PX+u/l*k*2,y*PX+v/l*k*2); ctx.stroke(); }
+        const t=Math.min(l/sim.vmax,1);
+        const [r,g,b]=heatColor(t);
+        const k=Math.min(l/sim.vmax,1)*12;
+        const ex=x*PX+u/l*k*2, ey=y*PX+v/l*k*2;
+        ctx.strokeStyle=`rgba(${r|0},${g|0},${b|0},.65)`;
+        ctx.fillStyle=`rgba(${r|0},${g|0},${b|0},.65)`;
+        ctx.lineWidth=1.4;
+        ctx.beginPath(); ctx.moveTo(x*PX,y*PX); ctx.lineTo(ex,ey); ctx.stroke();
+        // 箭头头
+        const ang=Math.atan2(v,u);
+        ctx.beginPath();
+        ctx.moveTo(ex,ey);
+        ctx.lineTo(ex-4*Math.cos(ang-0.5),ey-4*Math.sin(ang-0.5));
+        ctx.lineTo(ex-4*Math.cos(ang+0.5),ey-4*Math.sin(ang+0.5));
+        ctx.closePath(); ctx.fill();
+      }
     }
     if($('ckBadge').checked) drawWinBadges(ctx,sim);
     if($('ckFace').checked) drawWindFace(ctx);
