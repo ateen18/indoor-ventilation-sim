@@ -373,7 +373,7 @@ const S={ tool:'wall', stool:'select', brush:2, brushMode:'free',
   cityIdx:2, season:'summer', windDir:112.5, windSpd:3.4, ceil:2.8, winH:1.2, northDeg:0,
   fans:[], selFan:-1, dirty:false,
   underlay:null, ulOpacity:.7, ulScale:1, ulX:0, ulY:0, ulSrc:null, ulDst:[0,0],
-  zones:[], wins:[], scen:[],
+  zones:[], wins:[], doors:[], scen:[],
   useLocalWind:false,   // false=全部窗用全局公式; true=尊重各窗 localWind 覆盖
   localWindSource:null,  // null=手动输入; 'community'=来自小区模拟提取（已确认）; 'community-pending'=待确认
   pendingCommWind:null,  // 小区提取的待确认风场数据 [{dir,spd}, ...]
@@ -435,13 +435,14 @@ const isFluidC=c=>c===C_EXT||c===C_INT||c===C_WIN||c===C_DOORO||c===C_FURN2;
 /* 窗户开闭存在 win 对象里；solid 判断需要动态查 —— 用 Uint8 winOpenMask 同步 */
 const winCellId=new Int16Array(N).fill(-1);
 const winOpenMask=new Uint8Array(N).fill(1);
+const doorCellId=new Int16Array(N).fill(-1);
 function solidAt(i){ const c=cell[i]; if(c===C_WIN) return !winOpenMask[i]; return isSolid(c); }
 function fluidAt(i){ const c=cell[i]; if(c===C_WIN) return !!winOpenMask[i]; return isFluidC(c); }
 
 /* ================= 户型示例 ================= */
 function rect(x0,y0,x1,y1,t){ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++) if(inG(x,y)) cell[idx(x,y)]=t; }
 function buildDemo(){
-  cell.fill(C_EXT); erasedMask.fill(0); winCellId.fill(-1); winOpenMask.fill(1); S.fans=[]; S.zones=[]; S.wins=[];
+  cell.fill(C_EXT); erasedMask.fill(0); winCellId.fill(-1); winOpenMask.fill(1); doorCellId.fill(-1); S.fans=[]; S.zones=[]; S.wins=[]; S.doors=[];
   // 外墙
   rect(12,18,131,19,C_WALL); rect(12,94,131,95,C_WALL); rect(12,18,13,95,C_WALL); rect(130,18,131,95,C_WALL);
   // 内墙
@@ -502,6 +503,7 @@ function reclassify(){
   }
   revalidateOpenings();
   rebuildWindows();
+  rebuildDoors();
   computeZones();
 }
 /* 校验开口类型：按连通组检查——组内任一格贴室外→窗，整组不贴室外→门 */
@@ -536,6 +538,41 @@ function rebuildWindows(){
   S.wins=wins;
   winCellId.fill(-1); winOpenMask.fill(1);
   for(const w of wins) for(const c of w.cells){ winCellId[c]=w.id; winOpenMask[c]=w.open?1:0; }
+}
+/* 重新分组门（连通的门单元归为一扇门，继承开闭状态与摆向） */
+function rebuildDoors(){
+  const old=S.doors.slice();
+  const did=new Int16Array(N).fill(-1); const doors=[];
+  const isInt=c=>c===C_INT||c===C_FURN||c===C_FURN2;
+  for(let i=0;i<N;i++){
+    const ci=cell[i];
+    if((ci!==C_DOORO&&ci!==C_DOORC)||did[i]>=0) continue;
+    const id=doors.length; const cells=[i]; did[i]=id; const q=[i]; let h=0;
+    while(h<q.length){ const c=q[h++]; const x=c%NX,y=(c-x)/NX;
+      for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){ const nx2=x+dx,ny2=y+dy; if(!inG(nx2,ny2))continue;
+        const n2=idx(nx2,ny2); const cc=cell[n2];
+        if((cc===C_DOORO||cc===C_DOORC)&&did[n2]<0){did[n2]=id;cells.push(n2);q.push(n2);} } }
+    let open=cell[i]===C_DOORC?false:true, swingDir=null;
+    for(const o of old){ if(o.cells.some(c=>did[c]===id)){open=o.open;swingDir=o.swingDir;break;} }
+    if(swingDir===null){
+      let x0=NX,y0=NY,x1=0,y1=0;
+      for(const c of cells){ const x=c%NX,y=(c-x)/NX; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+      const w=x1-x0+1, h2=y1-y0+1;
+      if(w>=h2){
+        const above=inG(x0,y0-1)&&isInt(cell[idx(x0,y0-1)]);
+        const below=inG(x0,y1+1)&&isInt(cell[idx(x0,y1+1)]);
+        swingDir=(above&&!below)?-1:1;
+      } else {
+        const left=inG(x0-1,y0)&&isInt(cell[idx(x0-1,y0)]);
+        const right=inG(x1+1,y0)&&isInt(cell[idx(x1+1,y0)]);
+        swingDir=(left&&!right)?-1:1;
+      }
+    }
+    doors.push({id,cells,open,anim:open?1:0,swingDir});
+  }
+  S.doors=doors;
+  doorCellId.fill(-1);
+  for(const d of doors) for(const c of d.cells) doorCellId[c]=d.id;
 }
 function computeZones(){
   const zid=new Int16Array(N).fill(-1); const zones=[];
@@ -614,6 +651,29 @@ function winLeafSegs(w){
   }
   return segs;
 }
+/* 门扇几何（俯视）：返回门扇线段（铰链点 + 方向 + 长度，像素坐标）。
+   关闭(anim=0)：门扇平贴墙面覆盖门洞；打开(anim=1)：绕端部铰链向室内摆开 80°。
+   水平墙门（宽>高）铰链在左端，绕铰链上下摆；垂直墙门铰链在上端，左右摆。 */
+function doorLeafSegs(d){
+  const anim=d.anim===undefined? (d.open?1:0) : d.anim;
+  let x0=NX,y0=NY,x1=0,y1=0;
+  for(const c of d.cells){ const x=c%NX,y=(c-x)/NX; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+  const w=x1-x0+1, h=y1-y0+1;
+  const horizontal=w>=h;
+  const swingDir=d.swingDir||1;
+  const th=80*Math.PI/180*anim;
+  if(horizontal){
+    const hx=x0*PX, hy=(y0+h/2)*PX;
+    const len=(w-0.3)*PX;
+    const dx=Math.cos(th), dy=Math.sin(th)*swingDir;
+    return [{hx,hy,dx,dy,len}];
+  } else {
+    const hx=(x0+w/2)*PX, hy=y0*PX;
+    const len=(h-0.3)*PX;
+    const dx=Math.sin(th)*swingDir, dy=Math.cos(th);
+    return [{hx,hy,dx,dy,len}];
+  }
+}
 /* 点击测试：命中窗扇条（含伸入室内的部分，10px 容差）→ 返回窗 id */
 function winLeafAt(x,y){
   const xp=x*PX, yp=y*PX;
@@ -644,6 +704,11 @@ function animateWins(){
       const target=w.open?1:0;
       if(Math.abs(w.anim-target)>.002){ w.anim+=(target-w.anim)*.22; if(Math.abs(w.anim-target)<=.002)w.anim=target; active=true; }
     }
+    for(const d of S.doors){
+      if(d.anim===undefined) d.anim=d.open?1:0;
+      const dt=d.open?1:0;
+      if(Math.abs(d.anim-dt)>.002){ d.anim+=(dt-d.anim)*.22; if(Math.abs(d.anim-dt)<=.002)d.anim=dt; active=true; }
+    }
     drawModel(); drawBase(offBase.getContext('2d'),false);
     winAnimRaf= active? requestAnimationFrame(step) : 0;
   };
@@ -666,8 +731,8 @@ function drawBase(ctx,showZones){
     else if(c===C_FURN) col='#6b7280';      // 柜子（通顶，阻挡风）
     else if(c===C_FURN2) col='#c4b5a0';     // 家具（矮，减速风）
     else if(c===C_WIN) col= winOpenMask[i]? '#bae6fd':'#94a3b8';
-    else if(c===C_DOORO) col='#d97706';
-    else if(c===C_DOORC) col='#7c2d12';
+    else if(c===C_DOORO) col='#fef3c7';     // 开门洞口：浅暖色（门扇动画在上方渲染）
+    else if(c===C_DOORC) col='#fef3c7';     // 关门洞口：同浅色（门扇覆盖时看不到）
     else if(c===C_INT&&showZones){ const z=S.zid?S.zid[i]:-1; col= z>=0? zoneColors[z%zoneColors.length] : '#f1f5f9'; }
     else if(c===C_INT) col='#f1f5f9';
     if(col){ctx.fillStyle=col; ctx.fillRect(x*PX,y*PX,PX,PX);}
@@ -684,6 +749,23 @@ function drawBase(ctx,showZones){
       ctx.strokeStyle='rgba(15,23,42,.45)'; ctx.lineWidth=1;
       ctx.strokeRect(0,-5.5,s.len,11);
       ctx.fillStyle='#0f172a'; ctx.beginPath(); ctx.arc(0,0,2.2,0,7); ctx.fill();
+      ctx.restore();
+    }
+  }
+  // 门扇（俯视）：关闭=覆盖门洞，打开=绕铰链摆开80°
+  for(const d of S.doors){
+    for(const s of doorLeafSegs(d)){
+      ctx.save();
+      ctx.translate(s.hx,s.hy);
+      ctx.rotate(Math.atan2(s.dy,s.dx));
+      ctx.fillStyle=d.open? '#c2410c' : '#78350f';
+      ctx.fillRect(0,-5,s.len,10);
+      ctx.strokeStyle='rgba(15,23,42,.5)'; ctx.lineWidth=1;
+      ctx.strokeRect(0,-5,s.len,10);
+      // 铰链
+      ctx.fillStyle='#0f172a'; ctx.beginPath(); ctx.arc(0,0,2.5,0,7); ctx.fill();
+      // 门把手（远端）
+      ctx.fillStyle='#fbbf24'; ctx.beginPath(); ctx.arc(s.len-3,0,1.8,0,7); ctx.fill();
       ctx.restore();
     }
   }
@@ -717,6 +799,7 @@ function renderHeat(){
   const sim=S.sim; if(!sim) return;
   for(let i=0;i<N;i++){
     const o=i*4; const c=cell[i];
+    if(c===C_EXT){ d[o+3]=0; continue; }
     if(!fluidAt(i)){ d[o+3]=0; continue; }
     const sp=Math.hypot(sim.ux[i],sim.uy[i]);
     const t=sp/sim.vmax;
@@ -729,13 +812,15 @@ function renderHeat(){
 /* 粒子 */
 const PART_N=1600; const pX=new Float32Array(PART_N), pY=new Float32Array(PART_N), pLife=new Int16Array(PART_N);
 let bbox={x0:0,y0:0,x1:NX-1,y1:NY-1};
+// 粒子只存在于室内流体（排除 C_EXT 室外），防止粒子在户外游荡或沿画布边界回流
+const particleFluidAt=i=>{ const c=cell[i]; return c===C_INT||c===C_DOORO||c===C_FURN2||(c===C_WIN&&winOpenMask[i]); };
 function calcBBox(){ let x0=NX,y0=NY,x1=0,y1=0;
   for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){ if(cell[idx(x,y)]!==C_EXT){ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } }
-  bbox={x0:Math.max(0,x0-6),y0:Math.max(0,y0-6),x1:Math.min(NX-1,x1+6),y1:Math.min(NY-1,y1+6)}; }
+  bbox={x0:Math.max(0,x0-1),y0:Math.max(0,y0-1),x1:Math.min(NX-1,x1+1),y1:Math.min(NY-1,y1+1)}; }
 function seedParticles(){ calcBBox(); for(let i=0;i<PART_N;i++){ respawn(i);} }
 function respawn(i){ let tries=0;
   while(tries++<80){ const x=bbox.x0+Math.random()*(bbox.x1-bbox.x0), y=bbox.y0+Math.random()*(bbox.y1-bbox.y0); const c=idx(x|0,y|0);
-    if(fluidAt(c)){pX[i]=x;pY[i]=y;pLife[i]=200+Math.random()*700|0;return;} } pLife[i]=0; }
+    if(particleFluidAt(c)){pX[i]=x;pY[i]=y;pLife[i]=200+Math.random()*700|0;return;} } pLife[i]=0; }
 let lastT=0, simVisible=false, rafId=0;   // 模拟页不可见时停掉 rAF 循环（后台不再全速重绘）
 function drawSim(ts){
   if(!simVisible){ rafId=0; return; }
@@ -767,7 +852,7 @@ function drawSim(ts){
       ctx.lineCap='round';
       for(let i=0;i<PART_N;i++){
         if(pLife[i]<=0){respawn(i);continue;}
-        const cx=pX[i]|0, cy=pY[i]|0; if(!inG(cx,cy)||!fluidAt(idx(cx,cy))){respawn(i);continue;}
+        const cx=pX[i]|0, cy=pY[i]|0; if(!inG(cx,cy)||!particleFluidAt(idx(cx,cy))){respawn(i);continue;}
         const ii=idx(cx,cy);
         const u=sim.ux[ii], v=sim.uy[ii];
         const spd=Math.hypot(u,v);
@@ -785,6 +870,9 @@ function drawSim(ts){
         ctx.moveTo(pX[i]*PX,pY[i]*PX);
         ctx.lineTo(nx2*PX,ny2*PX);
         ctx.stroke();
+        // 新位置在室外 → 画完这段短拖尾后立即重生（模拟风吹出后消失）
+        const ncx=nx2|0, ncy=ny2|0;
+        if(!inG(ncx,ncy)||!particleFluidAt(idx(ncx,ncy))){ respawn(i); continue; }
         pX[i]=nx2; pY[i]=ny2; pLife[i]--;
       }
       ctx.restore();
@@ -1073,13 +1161,55 @@ function drawFans(ctx){
   }
 }
 
-/* ================= 2D CFD (D2Q9 LBM) ================= */
+/* ================= 2D CFD (D2Q9 MRT-LBM) ================= */
 const CX=[0,1,0,-1,0,1,-1,-1,1], CY=[0,0,1,0,-1,1,1,-1,-1];
 const W=[4/9,1/9,1/9,1/9,1/9,1/36,1/36,1/36,1/36];
 const OPP=[0,3,4,1,2,7,8,5,6];
 let F=new Float32Array(9*N), F2=new Float32Array(9*N);
 let RHO=new Float32Array(N), UX=new Float32Array(N), UY=new Float32Array(N), FLUID=new Uint8Array(N), SOLID=new Uint8Array(N);
 const TAU=.56, UMAX=.11;
+
+/* MRT 变换矩阵 M（D2Q9 原始矩基）
+   行含义: ρ, jx, jy, e(=|c|²), qx(=cx|c|²), qy(=cy|c|²), pxx(=cx²-cy²), pxy(=cxcy), pyy(=cx²cy²) */
+const M_MRT=[
+  [1, 1, 1, 1, 1, 1, 1, 1, 1],
+  [0, 1, 0,-1, 0, 1,-1,-1, 1],
+  [0, 0, 1, 0,-1, 1, 1,-1,-1],
+  [0, 1, 1, 1, 1, 2, 2, 2, 2],
+  [0, 1, 0,-1, 0, 2,-2,-2, 2],
+  [0, 0, 1, 0,-1, 2, 2,-2,-2],
+  [0, 1,-1, 1,-1, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 1,-1, 1,-1],
+  [0, 0, 0, 0, 0, 1, 1, 1, 1]
+];
+let MINV_MRT=null; // M⁻¹，初始化时计算
+
+/* 松弛率 ω (0=不弛豫守恒量, 1=全弛豫, 1/τ=控制粘度) */
+const OMEGA_S=1/TAU;          // 应力松弛率 (普通格)
+const OMEGA_S_FURN=1/2.5;     // 应力松弛率 (家具格，高粘度)
+const OMEGA_E=1.0;            // 能量/能量通量/高阶矩松弛率
+
+function matInv9(m){
+  const n=9; const a=[];
+  for(let i=0;i<n;i++){ const row=[]; for(let j=0;j<n;j++)row.push(m[i][j]); for(let j=0;j<n;j++)row.push(i===j?1:0); a.push(row); }
+  for(let col=0;col<n;col++){
+    let mr=col; for(let r=col+1;r<n;r++) if(Math.abs(a[r][col])>Math.abs(a[mr][col]))mr=r;
+    [a[col],a[mr]]=[a[mr],a[col]]; const d=a[col][col]; if(Math.abs(d)<1e-15) return null;
+    for(let j=col;j<2*n;j++)a[col][j]/=d;
+    for(let r=0;r<n;r++){ if(r===col)continue; const f=a[r][col]; for(let j=col;j<2*n;j++)a[r][j]-=f*a[col][j]; }
+  }
+  return a.map(r=>r.slice(n));
+}
+
+/* 平衡态矩 m_eq(ρ, ux, uy) — 解析公式，避免矩阵乘法 */
+function mrtMeq(rho,ux,uy,out){
+  const usq=ux*ux+uy*uy;
+  out[0]=rho; out[1]=rho*ux; out[2]=rho*uy;
+  out[3]=(2/3)*rho+rho*usq;
+  out[4]=(4/3)*rho*ux; out[5]=(4/3)*rho*uy;
+  out[6]=rho*(ux*ux-uy*uy); out[7]=rho*ux*uy;
+  out[8]=(1/9)*rho+(1/3)*rho*usq;
+}
 
 function rebuildMasks(){
   for(let i=0;i<N;i++){ FLUID[i]=fluidAt(i)?1:0; SOLID[i]=solidAt(i)?1:0; }
@@ -1088,6 +1218,10 @@ function feqAll(rho,ux,uy,out){ const usq=1.5*(ux*ux+uy*uy);
   for(let i=0;i<9;i++){ const cu=3*(CX[i]*ux+CY[i]*uy); out[i]=W[i]*rho*(1+cu+.5*cu*cu-usq); } }
 function initLBM(){
   rebuildMasks();
+  MINV_MRT=matInv9(M_MRT);
+  if(!MINV_MRT){ console.error('MRT: M⁻¹ 计算失败'); MINV_MRT=M_MRT.map(()=>Array(9).fill(0)); }
+  // 验证 M·M⁻¹ = I
+  for(let i=0;i<9;i++)for(let j=0;j<9;j++){ let s=0; for(let k=0;k<9;k++) s+=M_MRT[i][k]*MINV_MRT[k][j]; if(Math.abs(s-(i===j?1:0))>1e-10) console.warn('MRT: M·M⁻¹ 偏差',i,j,s); }
   const fe=new Float32Array(9);
   for(let i=0;i<N;i++){ feqAll(1,0,0,fe); for(let k=0;k<9;k++)F[k*N+i]=fe[k]; }
 }
@@ -1097,24 +1231,39 @@ function computeMaxV(){
   return Math.max(mv,.5);
 }
 function lbmStep(){
-  // 碰撞
+  // MRT 碰撞：矩空间独立松弛
+  const meq=new Float32Array(9), mp=new Float32Array(9);
   for(let i=0;i<N;i++){ if(!FLUID[i])continue;
-    let r=0,ux=0,uy=0;
-    for(let k=0;k<9;k++){const f=F[k*N+i]; r+=f; ux+=CX[k]*f; uy+=CY[k]*f;}
-    ux/=r; uy/=r;
+    const f0=F[0*N+i],f1=F[1*N+i],f2=F[2*N+i],f3=F[3*N+i],f4=F[4*N+i],f5=F[5*N+i],f6=F[6*N+i],f7=F[7*N+i],f8=F[8*N+i];
+    let r=f0+f1+f2+f3+f4+f5+f6+f7+f8;
+    let ux=(f1-f3+f5-f6-f7+f8)/r, uy=(f2-f4+f5+f6-f7-f8)/r;
     if(!isFinite(ux)||!isFinite(uy)||!isFinite(r)){ r=1;ux=0;uy=0; const fe=new Float32Array(9); feqAll(1,0,0,fe); for(let k=0;k<9;k++)F[k*N+i]=fe[k]; RHO[i]=1;UX[i]=0;UY[i]=0; continue; }
     RHO[i]=r; UX[i]=ux; UY[i]=uy;
-    const usq=1.5*(ux*ux+uy*uy);
-    for(let k=0;k<9;k++){ const cu=3*(CX[k]*ux+CY[k]*uy);
-      const fe=W[k]*r*(1+cu+.5*cu*cu-usq);
-      F[k*N+i]-= (F[k*N+i]-fe)/TAU; }
-  }
-  // 家具（C_FURN2）减速：碰撞后施加达西阻力，衰减速度但不完全阻挡
-  for(let i=0;i<N;i++){ if(cell[i]!==C_FURN2)continue;
-    UX[i]*=.55; UY[i]*=.55;
-    const usq=1.5*(UX[i]*UX[i]+UY[i]*UY[i]);
-    for(let k=0;k<9;k++){ const cu=3*(CX[k]*UX[i]+CY[k]*UY[i]);
-      F[k*N+i]=W[k]*RHO[i]*(1+cu+.5*cu*cu-usq); }
+    // 矩 m = M·f
+    const m0=r;
+    const m1=f1-f3+f5-f6-f7+f8;
+    const m2=f2-f4+f5+f6-f7-f8;
+    const m3=f1+f2+f3+f4+2*(f5+f6+f7+f8);
+    const m4=f1-f3+2*(f5-f6-f7+f8);
+    const m5=f2-f4+2*(f5+f6-f7-f8);
+    const m6=f1-f2+f3-f4;
+    const m7=f5-f6+f7-f8;
+    const m8=f5+f6+f7+f8;
+    // 平衡态矩
+    mrtMeq(r,ux,uy,meq);
+    // 松弛: m' = m - ω(m - m_eq)，守恒量不弛豫
+    const os = cell[i]===C_FURN2 ? OMEGA_S_FURN : OMEGA_S;
+    mp[0]=m0; mp[1]=m1; mp[2]=m2;
+    mp[3]=m3-OMEGA_E*(m3-meq[3]);
+    mp[4]=m4-OMEGA_E*(m4-meq[4]);
+    mp[5]=m5-OMEGA_E*(m5-meq[5]);
+    mp[6]=m6-os*(m6-meq[6]);
+    mp[7]=m7-os*(m7-meq[7]);
+    mp[8]=m8-OMEGA_E*(m8-meq[8]);
+    // 重建 f' = M⁻¹·m'
+    for(let k=0;k<9;k++){ let v=0; const row=MINV_MRT[k];
+      v+=row[0]*mp[0]+row[1]*mp[1]+row[2]*mp[2]+row[3]*mp[3]+row[4]*mp[4]+row[5]*mp[5]+row[6]*mp[6]+row[7]*mp[7]+row[8]*mp[8];
+      F[k*N+i]=v; }
   }
   // 流动（pull）
   for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){ const c=idx(x,y);
@@ -1424,7 +1573,7 @@ function markDirty(){ S.dirty=true; needPersist=true; $('dirtyBadge').classList.
 /* ---- 撤销/重做栈 ---- */
 const undoStack=[], redoStack=[];
 const UNDO_MAX=50;
-function snapshotState(){ return {cell:new Uint8Array(cell), wins:JSON.parse(JSON.stringify(S.wins)), fans:JSON.parse(JSON.stringify(S.fans))}; }
+function snapshotState(){ return {cell:new Uint8Array(cell), wins:JSON.parse(JSON.stringify(S.wins)), doors:JSON.parse(JSON.stringify(S.doors)), fans:JSON.parse(JSON.stringify(S.fans))}; }
 function pushUndo(){
   undoStack.push(snapshotState());
   if(undoStack.length>UNDO_MAX) undoStack.shift();
@@ -1432,8 +1581,10 @@ function pushUndo(){
 }
 function restoreState(s){
   cell.set(s.cell); S.wins=JSON.parse(JSON.stringify(s.wins)); S.fans=JSON.parse(JSON.stringify(s.fans));
-  winCellId.fill(-1); winOpenMask.fill(1);
+  S.doors=s.doors? JSON.parse(JSON.stringify(s.doors)) : [];
+  winCellId.fill(-1); winOpenMask.fill(1); doorCellId.fill(-1);
   for(const w of S.wins) for(const c of w.cells){ winCellId[c]=w.id; winOpenMask[c]=w.open?1:0; }
+  for(const d of S.doors) for(const c of d.cells) doorCellId[c]=d.id;
 }
 function doUndo(){
   if(!undoStack.length)return;
@@ -1640,8 +1791,19 @@ function genReport(){
   $('reportBox').scrollIntoView({behavior:'smooth'});
 }
 
-/* 门整组切换（连通的门单元一起开/关） */
+/* 门切换：通过 doorCellId 找到门对象，切换开闭状态并触发动画 */
 function toggleDoorGroup(i){
+  const did=doorCellId[i];
+  if(did>=0&&S.doors[did]){
+    const d=S.doors[did];
+    d.open=!d.open;
+    const target=d.open?C_DOORO:C_DOORC;
+    for(const c of d.cells) cell[c]=target;
+    markDirty();
+    animateWins();
+    return;
+  }
+  // 回退：无门对象时直接 BFS 切换
   const open=cell[i]===C_DOORO; const target=open?C_DOORC:C_DOORO;
   const seen=new Set([i]); const q=[i]; let h=0;
   while(h<q.length){ const c=q[h++]; cell[c]=target;
@@ -1788,7 +1950,7 @@ document.querySelectorAll('#view-sim .toolbar .tb[data-stool]').forEach(b=>b.onc
 $('brushSize').onchange=e=>S.brush=+e.target.value;
 $('brushMode').onchange=e=>S.brushMode=e.target.value;
 $('ckIntExt').onchange=()=>{ drawModel(); drawBase(offBase.getContext('2d'),false); };
-$('btnClear').onclick=()=>{ if(confirm('清空画布？')){ pushUndo(); cell.fill(C_EXT); erasedMask.fill(0); winCellId.fill(-1); winOpenMask.fill(1); S.wins=[]; S.fans=[]; S.zones=[]; DX=0.1; updateCellHint(); reclassify(); drawModel(); renderFanList(); markDirty(); } };
+$('btnClear').onclick=()=>{ if(confirm('清空画布？')){ pushUndo(); cell.fill(C_EXT); erasedMask.fill(0); winCellId.fill(-1); winOpenMask.fill(1); doorCellId.fill(-1); S.wins=[]; S.doors=[]; S.fans=[]; S.zones=[]; DX=0.1; updateCellHint(); reclassify(); drawModel(); renderFanList(); markDirty(); } };
 $('btnRun').onclick=()=>runSim(false);
 $('btnDemo').onclick=()=>{ if(confirm('重置为示例三居室户型？当前修改将丢失。')){ pushUndo(); buildDemo(); DX=0.1; updateCellHint(); reclassify(); nameDemoZones(); drawModel(); renderFanList(); markDirty(); } };
 $('btnSaveScen').onclick=()=>saveScenario($('scenName').value.trim()||undefined);
@@ -2160,8 +2322,8 @@ function countGroups(pred){
 }
 /* 应用识别结果到画布 */
 function applyAutoResult(){
-  cell.fill(C_EXT); erasedMask.fill(0); winCellId.fill(-1); winOpenMask.fill(1);
-  S.wins=[]; S.fans=[]; S.zones=[]; S.selFan=-1;
+  cell.fill(C_EXT); erasedMask.fill(0); winCellId.fill(-1); winOpenMask.fill(1); doorCellId.fill(-1);
+  S.wins=[]; S.doors=[]; S.fans=[]; S.zones=[]; S.selFan=-1;
   for(let i=0;i<N;i++){ if(auto.wall[i])cell[i]=C_WALL;
     else if(auto.open[i]===1)cell[i]=C_WIN;
     else if(auto.open[i]===2)cell[i]=C_DOORO; }
