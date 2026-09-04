@@ -86,6 +86,23 @@ const app=wrapper.call(global);
   let M0=0; for(let i=0;i<N;i++)M0+=RHO2[i];
   for(let k2=0;k2<300;k2++) lbmStep();
   let M1=0; for(let i=0;i<N;i++)M1+=RHO2[i];
-  console.log('再跑300步: 质量',M0.toFixed(1),'->',M1.toFixed(1),' 每步增',(M1-M0)/300);
+  const drift=(M1-M0)/300;
+  console.log('再跑300步: 质量',M0.toFixed(1),'->',M1.toFixed(1),' 每步增',drift);
+
+  /* ---- 回归断言（MRT 基线 2026-09-04，demo 户型 112.5° 3.4m/s） ---- */
+  const checks=[
+    ['无 NaN',            nan===0],
+    ['ACH 在 40~75',      s.ACH>=40&&s.ACH<=75],
+    ['Qin/Qout 失衡 <8%', Math.abs(s.Qin-s.Qout)/s.Qin<0.08],
+    ['Qin 在 8000~14000', s.Qin>=8000&&s.Qin<=14000],
+    ['t90 在 180~400s',   s.t90>=180&&s.t90<=400],
+    ['质量漂移 |Δ|/步 <0.001', Math.abs(drift)<0.001],
+    ['密度不发散 0.9<ρ<1.2', rmin>0.9&&rmax<1.2],
+  ];
+  let fails=0;
+  console.log('\n---- 断言 ----');
+  for(const [name,ok] of checks){ console.log((ok?'PASS':'FAIL')+'  '+name); if(!ok)fails++; }
+  if(fails){ console.error(`\n${fails} 项断言失败`); process.exit(2); }
+  console.log('\n全部断言通过');
   process.exit(0);
 })().catch(e=>{console.error('ERR',e);process.exit(1);});

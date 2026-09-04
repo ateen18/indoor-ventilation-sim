@@ -4,8 +4,16 @@
 # 测试/诊断脚本（开发用，不发布）
 _test/
 
-# 诊断报告（开发用）
+# 诊断报告（开发用）；README 与设计文档除外
 *.md
+!README.md
+!docs/**/*.md
+
+# TRAE 分享产物与临时文件
+furniture-type-doc/
+.trae-html-share-packages/
+_commit_msg.txt
+shot*.png
 
 # 系统文件
 Thumbs.db
