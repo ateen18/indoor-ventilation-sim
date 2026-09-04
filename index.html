@@ -1171,6 +1171,7 @@ let F=new Float32Array(9*N), F2=new Float32Array(9*N);
 let RHO=new Float32Array(N), UX=new Float32Array(N), UY=new Float32Array(N), FLUID=new Uint8Array(N), SOLID=new Uint8Array(N);
 const TAU=.52, UMAX=.11;
 const CSMAG=0.15;
+const C_D_FAN=0.6, C_D_WIN=0.65;
 
 /* MRT 变换矩阵 M（D2Q9 原始矩基）
    行含义: ρ, jx, jy, e(=|c|²), qx(=cx|c|²), qy(=cy|c|²), pxx(=cx²-cy²), pxy(=cxcy), pyy(=cx²cy²) */
@@ -1231,7 +1232,7 @@ function initLBM(){
 function computeMaxV(){
   let mv=S.windSpd;
   if(S.useLocalWind) for(const w of S.wins){ if(w.localWind&&w.localWind.spd!=null) mv=Math.max(mv,w.localWind.spd); }
-  for(const f of S.fans){ if(!f.on)continue; const a=Math.PI*(f.d/2)**2; mv=Math.max(mv,f.q/3600/a); }
+  for(const f of S.fans){ if(!f.on)continue; const a=Math.PI*(f.d/2)**2; mv=Math.max(mv,f.q/3600/a*C_D_FAN); }
   return Math.max(mv,.5);
 }
 function commMaxV(){ return Math.max(.5, S.windSpd); }   // 小区风场基准：与户型风扇/覆盖解耦，避免户型风扇压低小区来流分辨率
@@ -1406,7 +1407,7 @@ function fanBC(f){
   for(const fan of S.fans){ if(!fan.on)continue;
     const a=fan.ang*Math.PI/180;
     const area=Math.PI*(fan.d/2)**2;
-    const v=fan.q/3600/area*conv;
+    const v=fan.q/3600/area*conv*C_D_FAN;
     const ux=Math.sin(a)*v, uy=-Math.cos(a)*v;
     const cC=fan.x/DX, rC=fan.y/DX, rad=fan.d/DX/2+.5;   // cC=列(x), rC=行(y)；曾把两循环边界对调，风扇仅在 |x-y|<2r 对角线附近才生效
     for(let y=Math.max(0,rC-rad|0);y<=Math.min(NY-1,rC+rad|0);y++)
@@ -1455,7 +1456,7 @@ async function runSim(auto){
       const x=c%NX, y=(c-x)/NX, ix=x-n[0], iy=y-n[1];
       if(inG(ix,iy)&&cell[idx(ix,iy)]===C_WIN) continue;   // 只统计靠室内一层（外层是BC强制层，读的是真实入室流速）
       q+=-(uxP[c]*n[0]+uyP[c]*n[1]); }
-    return q*DX*S.winH*3600;
+    return q*DX*S.winH*C_D_WIN*3600;
   });
   let Qin=0,Qout=0;
   for(const q of winQ){ if(q>0)Qin+=q; else Qout-=q; }
