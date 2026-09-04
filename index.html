@@ -1169,7 +1169,8 @@ const W=[4/9,1/9,1/9,1/9,1/9,1/36,1/36,1/36,1/36];
 const OPP=[0,3,4,1,2,7,8,5,6];
 let F=new Float32Array(9*N), F2=new Float32Array(9*N);
 let RHO=new Float32Array(N), UX=new Float32Array(N), UY=new Float32Array(N), FLUID=new Uint8Array(N), SOLID=new Uint8Array(N);
-const TAU=.56, UMAX=.11;
+const TAU=.52, UMAX=.11;
+const CSMAG=0.15;
 
 /* MRT 变换矩阵 M（D2Q9 原始矩基）
    行含义: ρ, jx, jy, e(=|c|²), qx(=cx|c|²), qy(=cy|c|²), pxx(=cx²-cy²), pxy(=cxcy), pyy(=cx²cy²) */
@@ -1255,12 +1256,17 @@ function lbmStep(){
     const m8=f5+f6+f7+f8;
     // 平衡态矩 + 松弛: m' = m - ω(m - m_eq)，守恒量(ρ/jx/jy)不弛豫
     const usq=ux*ux+uy*uy;
-    const os = cell[i]===C_FURN2 ? OMEGA_S_FURN : OMEGA_S;
+    const m6eq=r*(ux*ux-uy*uy), m7eq=r*ux*uy;
+    const m6neq=m6-m6eq, m7neq=m7-m7eq;
+    const tauBase = cell[i]===C_FURN2 ? 2.5 : TAU;
+    const Qneq = Math.sqrt(m6neq*m6neq + 4*m7neq*m7neq);
+    const rr = Math.max(Math.abs(r),.1);
+    const os = 1/(tauBase + 9*CSMAG*CSMAG*Qneq/(2*rr*tauBase));
     const p3=m3-OMEGA_E*(m3-((2/3)*r+r*usq));
     const p4=m4-OMEGA_E*(m4-(4/3)*r*ux);
     const p5=m5-OMEGA_E*(m5-(4/3)*r*uy);
-    const p6=m6-os*(m6-r*(ux*ux-uy*uy));
-    const p7=m7-os*(m7-r*ux*uy);
+    const p6=m6-os*m6neq;
+    const p7=m7-os*m7neq;
     const p8=m8-OMEGA_E*(m8-((1/9)*r+(1/3)*r*usq));
     // 解析重建 f' = M⁻¹·m'（守恒量 m0/m1/m2 直接用原值）
     const AB=p3-2*p8, A=(AB+p6)*0.5, B=(AB-p6)*0.5;
